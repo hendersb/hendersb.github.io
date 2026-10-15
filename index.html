@@ -12,6 +12,13 @@
   <nav>
     <button id="tab-create" class="tab active">Create character</button>
     <button id="tab-roll" class="tab">Roller</button>
+    <div id="music" class="music" hidden>
+      <button id="m-prev" title="Previous track">⏮</button>
+      <button id="m-play" title="Play music">▶</button>
+      <button id="m-next" title="Next track">⏭</button>
+      <span id="m-title" class="m-title">Music</span>
+      <input id="m-vol" type="range" min="0" max="100" value="50" title="Music volume">
+    </div>
   </nav>
 </header>
 <main>
@@ -21,5 +28,7 @@
 <div id="toast" hidden></div>
 <script src="rules.js"></script>
 <script src="app.js"></script>
+<script src="tracks.js"></script>
+<script src="music.js"></script>
 </body>
 </html>
