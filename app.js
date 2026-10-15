@@ -42,7 +42,7 @@ function pickJson(onChar) {
     try {
       const data = JSON.parse((await input.files[0].text()).replace(/^\uFEFF/, ""));
       if (typeof data !== "object" || data === null) throw new Error("not a character file");
-      onChar({ ...newCharacter(), ...data });
+      onChar(normalizeCharacter(data));
       toast("Loaded " + (data.name || "character"));
     } catch (e) { toast("Could not load: " + e.message); }
   } });
@@ -63,9 +63,16 @@ function newCharacter() {
     narrative: Object.fromEntries(R.creation.narrative_fields.map((f) => [f, ""])),
     category_bases: zero(Object.keys(R.categories)), talents: zero(TALENTS),
     giftings: zero(Object.keys(R.giftings)), background_skills: [], goal: "", allegiance: "",
-    flaws: [], inventory: [], stress: zero(Object.keys(R.categories)), experience: 0, photo: "", notes: {},
+    flaws: [], inventory: [], stress: zero(Object.keys(R.categories)), experience: zero(Object.keys(R.categories)), photo: "", notes: {},
   };
 }
+// Saves from before per-category buckets stored one number; start those afresh.
+function normalizeCharacter(data) {
+  const ch = { ...newCharacter(), ...data };
+  if (typeof ch.experience !== "object" || ch.experience === null) ch.experience = newCharacter().experience;
+  return ch;
+}
+const xpBucket = (req) => (req.gifting ? "Spiritual" : req.category);
 function applyCallingBonuses(ch) {
   const granted = R.callings[ch.calling] || [];
   for (const g of Object.keys(R.giftings)) ch.giftings[g] = granted.includes(g) ? R.creation.gifting_bonus : 0;
@@ -127,7 +134,8 @@ function breakdown(ch, req) {
   return { parts, stress, flawXp };
 }
 function rollDice(ch, req) {
-  if (req.spend_xp < 0 || req.spend_xp > ch.experience) throw new Error("Cannot spend more experience than available.");
+  const bucket = xpBucket(req);
+  if (req.spend_xp < 0 || req.spend_xp > (ch.experience[bucket] || 0)) throw new Error(`Cannot spend more ${bucket} experience than available.`);
   const { parts, stress, flawXp } = breakdown(ch, req);
   const extra = req.mode === "normal" ? 0 : 1;
   const rolled = Array.from({ length: DICE_N + extra }, () => randInt(DICE_SIDES));
@@ -142,11 +150,10 @@ function rollDice(ch, req) {
   const [outcome, idx] = outcomeFor(total);
   let xpGained = outcome.experience;
   if (outcome.experience) xpGained += flawXp;
-  const stressCat = req.gifting ? "Spiritual" : req.category;
-  ch.stress[stressCat] = Math.min(R.stress.max, (ch.stress[stressCat] || 0) + stress);
-  ch.experience += xpGained - req.spend_xp;
+  ch.stress[bucket] = Math.min(R.stress.max, (ch.stress[bucket] || 0) + stress);
+  ch.experience[bucket] = (ch.experience[bucket] || 0) + xpGained - req.spend_xp;
   return { dice, dropped, breakdown: all, total, outcome: outcome.name, idx, frame: outcome.frame,
-           xpGained, xpSpent: req.spend_xp, stressAdded: stress, mode: req.mode };
+           xpGained, xpSpent: req.spend_xp, stressAdded: stress, mode: req.mode, xpCategory: bucket };
 }
 function diceLabel(mode) {
   if (mode === "normal") return `${DICE_N}d${DICE_SIDES}`;
@@ -156,7 +163,7 @@ function diceLabel(mode) {
 // ---------- creation page ----------
 const Creation = (() => {
   const w = { narrative: {}, bases: {}, talents: {}, gifts: {}, notes: {} };
-  let stress = {}, experience = 0, photo = "", loading = false;
+  let stress = {}, experience = {}, photo = "", loading = false;
   const intIn = (max) => h("input", { type: "number", min: 0, max, step: 1, value: 0, oninput: refresh });
   const txt = (label) => { const i = h("input", { type: "text", oninput: refresh }); return [i, h("label", { class: "f" }, label, i)]; };
   const filled = (list) => list.map((i) => i.value.trim()).filter(Boolean);
@@ -225,13 +232,13 @@ const Creation = (() => {
     applyCallingBonuses(ch);
     ch.background_skills = filled(w.skills); ch.goal = w.goal.value.trim(); ch.allegiance = w.allegiance.value.trim();
     ch.flaws = filled(w.flaws); ch.inventory = filled(w.inventory);
-    ch.photo = photo; ch.stress = { ...ch.stress, ...stress }; ch.experience = experience;
+    ch.photo = photo; ch.stress = { ...ch.stress, ...stress }; ch.experience = { ...ch.experience, ...experience };
     ch.notes = Object.fromEntries(Object.entries(w.notes).map(([k, e]) => [k, e.value]));
     return ch;
   }
   function fromCharacter(ch) {
     loading = true;
-    stress = { ...ch.stress }; experience = ch.experience || 0;
+    stress = { ...ch.stress }; experience = { ...(ch.experience || {}) };
     w.name.value = ch.name || "";
     w.calling.value = ch.calling in R.callings ? ch.calling : "";
     w.motivation.value = ch.motivation in R.motivations ? ch.motivation : "";
@@ -301,21 +308,17 @@ const Roller = (() => {
   function build(root) {
     w.name = h("div", { style: "font-size:22px;font-weight:bold" }); w.calling = h("div", { class: "muted" });
     w.bars = h("div"); w.sheet = h("div", { class: "muted small" });
-    w.stress = {}; w.stressNote = {};
+    w.stress = {}; w.stressNote = {}; w.xp = {};
     const stressCard = card("Stress and experience");
     for (const cat of Object.keys(R.categories)) {
-      w.stress[cat] = h("input", { type: "number", min: 0, max: R.stress.max, step: 1, oninput: () => {
+      w.stress[cat] = h("input", { type: "number", min: 0, max: R.stress.max, step: 1, title: "Stress", oninput: () => {
         ch.stress[cat] = Math.max(0, parseInt(w.stress[cat].value) || 0); stressNote(cat); preview(); } });
+      w.xp[cat] = h("input", { type: "number", min: 0, step: 1, title: "Experience", oninput: () => {
+        ch.experience[cat] = Math.max(0, parseInt(w.xp[cat].value) || 0); preview(); } });
       w.stressNote[cat] = h("span", { class: "muted small" });
-      stressCard.append(h("div", { class: "row" }, h("b", { class: "cat" }, cat), w.stress[cat], w.stressNote[cat]));
+      stressCard.append(h("div", { class: "row" }, h("b", { class: "cat" }, cat),
+        h("label", { class: "f" }, "Stress ", w.stress[cat]), h("label", { class: "f" }, "Experience ", w.xp[cat]), w.stressNote[cat]));
     }
-    w.xp = h("input", { type: "number", min: 0, step: 1, oninput: () => {
-      ch.experience = Math.max(0, parseInt(w.xp.value) || 0);
-      w.spend.max = ch.experience;
-      if (s.spend > ch.experience) { s.spend = ch.experience; w.spend.value = s.spend; }
-      preview(); } });
-    stressCard.append(h("div", { class: "row" }, h("b", { class: "cat" }, "Experience"), w.xp));
-
     const radio = (name, opts, get, set) => h("div", { class: "row" }, Object.entries(opts).map(([v, label]) =>
       h("label", {}, h("input", { type: "radio", name, value: v, checked: get() === v, onchange: () => { set(v); preview(); } }), label)));
     w.kindRadio = radio("kind", { talent: "Talent roll", gifting: "Gifting roll (non-talent action)" }, () => s.kind, (v) => { s.kind = v; applyKind(); });
@@ -337,8 +340,9 @@ const Roller = (() => {
       modCard.append(h("div", {}, h("label", {}, modBoxes[key], `${m.label}  (${signed(m.value)}${m.stress ? `, +${m.stress} Stress` : ""})`)));
     }
     w.spend = h("input", { type: "number", min: 0, step: 1, value: 0, oninput: () => {
-      s.spend = Math.min(ch.experience, Math.max(0, parseInt(w.spend.value) || 0)); preview(); } });
-    const spendCard = card("Spend experience", h("div", { class: "row" }, `Points (each +${R.experience.points_per_bonus})`, w.spend));
+      s.spend = Math.max(0, parseInt(w.spend.value) || 0); preview(); } });
+    w.spendLabel = h("span", {});
+    const spendCard = card("Spend experience", h("div", { class: "row" }, w.spendLabel, w.spend));
     w.preview = h("div", { class: "preview" });
 
     w.dice = h("div", { class: "dice" }); w.total = h("div", { class: "total" }, "-");
@@ -386,9 +390,7 @@ const Roller = (() => {
     const top = Math.max(6, ...Object.values(values));
     w.bars.replaceChildren(...Object.entries(values).map(([t, v]) => h("div", { class: "barrow" }, h("span", {}, t),
       h("div", { class: "barwrap" }, h("div", { class: "bar", style: `width:${Math.max(v, 0) / top * 100}%` })), h("span", {}, signed(v)))));
-    for (const cat of Object.keys(R.categories)) { w.stress[cat].value = ch.stress[cat] || 0; stressNote(cat); }
-    w.xp.value = ch.experience; w.spend.max = ch.experience;
-    if (s.spend > ch.experience) { s.spend = ch.experience; w.spend.value = s.spend; }
+    for (const cat of Object.keys(R.categories)) { w.stress[cat].value = ch.stress[cat] || 0; w.xp[cat].value = ch.experience[cat] || 0; stressNote(cat); }
     w.giftSel.replaceChildren(...Object.keys(R.giftings).map((g) => h("option", { value: g }, `${g}  (${signed(ch.giftings[g] || 0)})`)));
     w.giftSel.value = s.gifting;
     const prevTalent = s.talent;
@@ -402,6 +404,10 @@ const Roller = (() => {
     preview();
   }
   function preview() {
+    const bucket = s.kind === "gifting" ? "Spiritual" : s.category, available = ch.experience[bucket] || 0;
+    w.spend.max = available;
+    w.spendLabel.textContent = `${bucket} points, ${available} available (each +${R.experience.points_per_bonus})`;
+    if (s.spend > available) { s.spend = available; w.spend.value = available; }
     const req = request();
     w.roll.textContent = "ROLL " + diceLabel(req.mode);
     try {
@@ -442,8 +448,8 @@ const Roller = (() => {
       ? `${diceLabel(r.mode)} (${r.dice.join(" + ")}${r.dropped.length ? `, dropped ${r.dropped[0]}` : ""}): <b>${v}</b>`
       : `${esc(k)}: <b>${signed(v)}</b>`).join("<br>");
     const changes = [];
-    if (r.xpGained) changes.push(`Gained ${r.xpGained} experience`);
-    if (r.xpSpent) changes.push(`Spent ${r.xpSpent} experience`);
+    if (r.xpGained) changes.push(`Gained ${r.xpGained} ${r.xpCategory} experience`);
+    if (r.xpSpent) changes.push(`Spent ${r.xpSpent} ${r.xpCategory} experience`);
     if (r.stressAdded) changes.push(`+${r.stressAdded} ${req.gifting ? "Spiritual" : req.category} stress`);
     w.changes.textContent = changes.join(" | ");
     const what = req.gifting || req.talent || req.category, tag = r.mode !== "normal" ? ` [${r.mode}]` : "";
