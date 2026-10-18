@@ -4,6 +4,7 @@ const R = window.RULES;
 const TALENTS = Object.values(R.categories).flat();
 const DICE_N = R.dice.count, DICE_SIDES = R.dice.sides;
 const BAND_COLORS = ["--warn", "--accent", "--good", "--profound"];
+const CAT_COLOURS = { Physical: "--warn", Mental: "--teal", Emotional: "--accent", Spiritual: "--profound" };
 const LONG_FIELDS = ["Character Description", "Distinguishing Features"];
 const MAX_PHOTO = 1500000;
 const MODE_LABELS = { normal: "Normal", advantage: "Advantage", disadvantage: "Disadvantage" };
@@ -291,8 +292,10 @@ const Creation = (() => {
 // ---------- roller page ----------
 const Roller = (() => {
   let ch = defaultCharacter(), rolling = false;
-  const s = { kind: "talent", category: Object.keys(R.categories)[0], talent: "", gifting: Object.keys(R.giftings)[0], mode: "normal", spend: 0 };
+  const firstCat = Object.keys(R.categories)[0];
+  const s = { kind: "talent", category: firstCat, talent: R.categories[firstCat][0], gifting: Object.keys(R.giftings)[0], mode: "normal", spend: 0 };
   const mods = {}, w = {}, modBoxes = {};
+  const penalty = (cat) => Math.floor((ch.stress[cat] || 0) / R.stress.points_per_penalty) * R.stress.penalty;
 
   const callingText = () => {
     const b = R.calling_attribute_bonuses[ch.calling] || {};
@@ -307,37 +310,47 @@ const Roller = (() => {
 
   function build(root) {
     w.name = h("div", { style: "font-size:22px;font-weight:bold" }); w.calling = h("div", { class: "muted" });
-    w.bars = h("div"); w.sheet = h("div", { class: "muted small" });
-    w.stress = {}; w.stressNote = {}; w.xp = {};
-    const stressCard = card("Stress and experience");
-    for (const cat of Object.keys(R.categories)) {
+    w.sheet = h("div", { class: "muted small" });
+    w.stress = {}; w.xp = {}; w.val = {}; w.talentBtn = {};
+    const grid = h("div", { class: "tgrid" });
+    for (const head of ["", "Roll", "Stress", "Exp."]) grid.append(h("i", { class: "th" }, head));
+    for (const [cat, ts] of Object.entries(R.categories)) {
+      const bg = `background:var(${CAT_COLOURS[cat] || "--accent"})`;
       w.stress[cat] = h("input", { type: "number", min: 0, max: R.stress.max, step: 1, title: "Stress", oninput: () => {
-        ch.stress[cat] = Math.max(0, parseInt(w.stress[cat].value) || 0); stressNote(cat); preview(); } });
+        ch.stress[cat] = Math.max(0, parseInt(w.stress[cat].value) || 0); renderValues(); preview(); } });
       w.xp[cat] = h("input", { type: "number", min: 0, step: 1, title: "Experience", oninput: () => {
         ch.experience[cat] = Math.max(0, parseInt(w.xp[cat].value) || 0); preview(); } });
-      w.stressNote[cat] = h("span", { class: "muted small" });
-      stressCard.append(h("div", { class: "row" }, h("b", { class: "cat" }, cat),
-        h("label", { class: "f" }, "Stress ", w.stress[cat]), h("label", { class: "f" }, "Experience ", w.xp[cat]), w.stressNote[cat]));
+      grid.append(h("b", { class: "band first", style: bg }, cat), h("span", { class: "band", style: bg }),
+        h("span", { class: "band", style: bg }, w.stress[cat]), h("span", { class: "band last", style: bg }, w.xp[cat]));
+      for (const t of ts) {
+        w.talentBtn[t] = h("button", { class: "talent", title: "Roll " + t, onclick: () => selectTalent(t) }, t);
+        w.val[t] = h("span", { class: "tval" });
+        grid.append(w.talentBtn[t], w.val[t], h("span"), h("span"));
+      }
     }
     const radio = (name, opts, get, set) => h("div", { class: "row" }, Object.entries(opts).map(([v, label]) =>
       h("label", {}, h("input", { type: "radio", name, value: v, checked: get() === v, onchange: () => { set(v); preview(); } }), label)));
     w.kindRadio = radio("kind", { talent: "Talent roll", gifting: "Gifting roll (non-talent action)" }, () => s.kind, (v) => { s.kind = v; applyKind(); });
-    w.category = h("select", { onchange: () => { s.category = w.category.value; populateTalents(); preview(); } },
-      Object.keys(R.categories).map((k) => h("option", { value: k }, k)));
-    w.talentSel = h("select", { onchange: () => { s.talent = w.talentSel.value; preview(); } });
+    w.motivation = h("b", { style: "color:var(--teal)" });
+    w.workSel = h("select", { onchange: () => {
+      const talent = R.motivations[ch.motivation]?.works[w.workSel.value];
+      mods.motivation_work = !!talent; modBoxes.motivation_work.checked = !!talent;
+      if (talent) selectTalent(talent); else preview();
+    } });
+    w.workLab = h("label", { class: "f" }, "Work", w.workSel);
     w.giftSel = h("select", { onchange: () => { s.gifting = w.giftSel.value; preview(); } });
-    w.talentLab = h("label", { class: "f" }, "Specific talent", w.talentSel);
     w.giftLab = h("label", { class: "f" }, "Gifting", w.giftSel);
     w.modeRadio = radio("mode", MODE_LABELS, () => s.mode, (v) => (s.mode = v));
-    const setup = card("Challenge", w.kindRadio, h("label", { class: "f" }, "Category", w.category), w.talentLab, w.giftLab,
-      h("div", { class: "muted small" }, "Storyteller call"), w.modeRadio);
+    const setup = card("Challenge", w.kindRadio, h("div", { class: "row" }, h("span", { class: "muted" }, "Motivation"), w.motivation),
+      w.workLab, w.giftLab, h("div", { class: "muted small" }, "Storyteller call"), w.modeRadio);
 
     const modCard = card("Optional modifiers (nominate each one)");
     for (const [key, m] of Object.entries(R.modifiers)) {
       if (m.applies_to === "gifting") continue;
       mods[key] = false;
       modBoxes[key] = h("input", { type: "checkbox", onchange: () => { mods[key] = modBoxes[key].checked; preview(); } });
-      modCard.append(h("div", {}, h("label", {}, modBoxes[key], `${m.label}  (${signed(m.value)}${m.stress ? `, +${m.stress} Stress` : ""})`)));
+      // Motivation Work is driven by the Work dropdown, so its checkbox is not offered separately.
+      modCard.append(h("div", { hidden: key === "motivation_work" }, h("label", {}, modBoxes[key], `${m.label}  (${signed(m.value)}${m.stress ? `, +${m.stress} Stress` : ""})`)));
     }
     w.spend = h("input", { type: "number", min: 0, step: 1, value: 0, oninput: () => {
       s.spend = Math.max(0, parseInt(w.spend.value) || 0); preview(); } });
@@ -358,44 +371,57 @@ const Roller = (() => {
       h("button", { class: "btn outline", onclick: () => download(ch, (ch.name || "character") + ".json") }, "Save character"),
       h("button", { class: "btn outline", onclick: () => pickJson(setCharacter) }, "Load character"));
     root.append(h("div", { class: "cols" },
-      h("div", { class: "col" }, card("", w.name, w.calling, w.bars), stressCard, card("Quick reference", w.sheet), w.saveLoad),
-      h("div", { class: "col wide" }, h("h2", {}, "Set up your roll"), setup, modCard, spendCard, w.preview),
+      h("div", { class: "col" }, card("Character", w.name, w.calling, grid), w.saveLoad),
+      h("div", { class: "col wide" }, h("h2", {}, "Set up your roll"), setup, modCard, spendCard, w.preview, card("Quick reference", w.sheet)),
       h("div", { class: "col" }, result, hist, w.roll)));
+    populateWorks();
     refreshAll();
   }
 
-  function stressNote(cat) {
-    const p = Math.floor((ch.stress[cat] || 0) / R.stress.points_per_penalty) * R.stress.penalty;
-    w.stressNote[cat].textContent = p ? `-${p} to rolls` : "no penalty";
+  function renderValues() {
+    for (const t of TALENTS) {
+      const cat = categoryOf(t), p = penalty(cat);
+      w.val[t].innerHTML = signed(effCategory(ch, cat) + effTalent(ch, t)) + (p ? ` <span class="pen">-${p}</span>` : "");
+    }
   }
-  function populateTalents() {
-    w.talentSel.replaceChildren(...R.categories[s.category].map((t) =>
-      h("option", { value: t }, `${t}  (${signed(effTalent(ch, t))})`)));
-    s.talent = w.talentSel.value;
+  function populateWorks() {
+    const works = R.motivations[ch.motivation]?.works || {};
+    w.motivation.textContent = ch.motivation || "-";
+    w.workSel.replaceChildren(h("option", { value: "" }, "None"),
+      ...Object.entries(works).map(([work, talent]) => h("option", { value: work }, `${work}  (+${R.modifiers.motivation_work.value} ${talent})`)));
+    clearWork();
+  }
+  function clearWork() {
+    w.workSel.value = "";
+    mods.motivation_work = false; modBoxes.motivation_work.checked = false;
+  }
+  function selectTalent(t) {
+    const work = R.motivations[ch.motivation]?.works[w.workSel.value];
+    if (work && work !== t) clearWork(); // a Work only boosts its own talent
+    s.kind = "talent"; s.category = categoryOf(t); s.talent = t;
+    w.kindRadio.querySelector("input[value=talent]").checked = true;
+    applyKind();
+    preview();
   }
   function applyKind() {
     const g = s.kind === "gifting";
-    w.talentLab.hidden = g; w.giftLab.hidden = !g;
+    w.giftLab.hidden = !g;
+    w.workSel.disabled = g;
+    if (g) clearWork();
     for (const [k, box] of Object.entries(modBoxes)) {
       const ok = !(g && R.modifiers[k].applies_to === "talent");
       box.disabled = !ok; box.parentElement.classList.toggle("disabled", !ok);
       if (!ok) { box.checked = false; mods[k] = false; }
     }
+    for (const [t, btn] of Object.entries(w.talentBtn)) btn.classList.toggle("sel", !g && t === s.talent);
   }
   function refreshAll() {
     w.name.textContent = ch.name || "Unnamed";
     w.calling.textContent = callingText();
-    const values = Object.fromEntries(TALENTS.map((t) => { const cat = categoryOf(t);
-      return [t, (ch.category_bases[cat] || 0) + (ch.talents[t] || 0) + catBonus(ch, cat) + talentBonus(ch, t)]; }));
-    const top = Math.max(6, ...Object.values(values));
-    w.bars.replaceChildren(...Object.entries(values).map(([t, v]) => h("div", { class: "barrow" }, h("span", {}, t),
-      h("div", { class: "barwrap" }, h("div", { class: "bar", style: `width:${Math.max(v, 0) / top * 100}%` })), h("span", {}, signed(v)))));
-    for (const cat of Object.keys(R.categories)) { w.stress[cat].value = ch.stress[cat] || 0; w.xp[cat].value = ch.experience[cat] || 0; stressNote(cat); }
+    renderValues();
+    for (const cat of Object.keys(R.categories)) { w.stress[cat].value = ch.stress[cat] || 0; w.xp[cat].value = ch.experience[cat] || 0; }
     w.giftSel.replaceChildren(...Object.keys(R.giftings).map((g) => h("option", { value: g }, `${g}  (${signed(ch.giftings[g] || 0)})`)));
     w.giftSel.value = s.gifting;
-    const prevTalent = s.talent;
-    populateTalents();
-    if (R.categories[s.category].includes(prevTalent)) { w.talentSel.value = prevTalent; s.talent = prevTalent; }
     const j = (a) => a.join(", ") || "-";
     w.sheet.innerHTML = [`<b>Goal:</b> ${esc(ch.goal || "-")}`, `<b>Allegiance:</b> ${esc(ch.allegiance || "-")}`,
       `<b>Flaws:</b> ${esc(j(ch.flaws))}`, `<b>Background skills:</b> ${esc(j(ch.background_skills))}`,
@@ -452,10 +478,21 @@ const Roller = (() => {
     if (r.xpSpent) changes.push(`Spent ${r.xpSpent} ${r.xpCategory} experience`);
     if (r.stressAdded) changes.push(`+${r.stressAdded} ${req.gifting ? "Spiritual" : req.category} stress`);
     w.changes.textContent = changes.join(" | ");
+    const work = w.workSel.value;
+    const terms = Object.entries(r.breakdown).map(([k, v]) => {
+      if (k === "dice") return `Dice ${r.dice.join("+")}${r.dropped.length ? `, dropped ${r.dropped[0]}` : ""} = ${v}`;
+      if (k === R.modifiers.motivation_work.label && work) return `${k} (${ch.motivation}: ${work}) ${signed(v)}`;
+      return `${k} ${signed(v)}`;
+    });
+    const cat = req.gifting ? "Spiritual" : req.category, notes = [];
+    if (r.xpGained) notes.push(`gained ${r.xpGained} ${r.xpCategory} exp`);
+    if (r.xpSpent) notes.push(`spent ${r.xpSpent} ${r.xpCategory} exp`);
+    if (r.stressAdded) notes.push(`+${r.stressAdded} ${cat} stress`);
     const what = req.gifting || req.talent || req.category, tag = r.mode !== "normal" ? ` [${r.mode}]` : "";
-    w.history.prepend(h("div", {}, `${what}${tag}: ${r.total} - ${r.outcome} (${r.frame})`));
+    w.history.prepend(h("div", { class: "entry" }, h("div", {}, `${what}${tag}: ${r.total} - ${r.outcome} (${r.frame})`),
+      h("div", { class: "muted small" }, terms.join("  |  ")), notes.length ? h("div", { class: "muted small" }, notes.join(", ")) : ""));
   }
-  function setCharacter(c) { ch = c; s.spend = 0; w.spend.value = 0; refreshAll(); }
+  function setCharacter(c) { ch = c; s.spend = 0; w.spend.value = 0; populateWorks(); refreshAll(); }
   return { build, setCharacter, get char() { return ch; } };
 })();
 
