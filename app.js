@@ -35,7 +35,8 @@ function toast(msg) {
   toastTimer = setTimeout(() => (t.hidden = true), 3500);
 }
 function download(obj, name) {
-  const a = h("a", { href: URL.createObjectURL(new Blob([JSON.stringify(obj, null, 2)], { type: "application/json" })), download: name });
+  const data = { ...obj, journal: Journal.entries };
+  const a = h("a", { href: URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" })), download: name });
   a.click(); URL.revokeObjectURL(a.href);
 }
 function pickJson(onChar) {
@@ -44,6 +45,7 @@ function pickJson(onChar) {
       const data = JSON.parse((await input.files[0].text()).replace(/^\uFEFF/, ""));
       if (typeof data !== "object" || data === null) throw new Error("not a character file");
       onChar(normalizeCharacter(data));
+      if (Array.isArray(data.journal)) Journal.load(data.journal);
       toast("Loaded " + (data.name || "character"));
     } catch (e) { toast("Could not load: " + e.message); }
   } });
@@ -496,14 +498,73 @@ const Roller = (() => {
   return { build, setCharacter, get char() { return ch; } };
 })();
 
+// ---------- journal ----------
+const Journal = (() => {
+  const KEY = "unorthodox-journal";
+  let entries = [], current = null; // current: entry being edited, or null for a new one
+  const w = {};
+  try { entries = JSON.parse(localStorage.getItem(KEY) || "[]"); } catch { entries = []; }
+  const persist = () => { try { localStorage.setItem(KEY, JSON.stringify(entries)); } catch { /* storage unavailable */ } };
+  const stamp = (iso) => new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+
+  function build(root) {
+    w.title = h("input", { type: "text", placeholder: "Heading" });
+    w.body = h("textarea", { rows: 16, placeholder: "Write your notes here..." });
+    w.meta = h("div", { class: "muted small" });
+    w.list = h("div", { class: "jlist" });
+    w.del = h("button", { class: "btn outline", onclick: remove }, "Delete");
+    root.append(h("div", { class: "cols jcols" },
+      h("div", { class: "col wide" }, card("Journal entry", w.meta, w.title, w.body,
+        h("div", { class: "row" }, h("button", { class: "btn", onclick: save }, "Save entry"),
+          h("button", { class: "btn outline", onclick: () => edit(null) }, "New entry"), w.del))),
+      h("div", { class: "col" }, card("Entries (newest first)", w.list))));
+    edit(null);
+  }
+  function edit(e) {
+    current = e;
+    w.title.value = e ? e.title : ""; w.body.value = e ? e.text : "";
+    w.meta.textContent = e ? `Entry #${e.id} - ${stamp(e.date)}` : "New entry";
+    w.del.hidden = !e;
+    render();
+  }
+  function save() {
+    const title = w.title.value.trim(), text = w.body.value.trim();
+    if (!title && !text) return toast("Nothing to save");
+    if (current) { current.title = title || "Untitled"; current.text = text; }
+    else {
+      current = { id: Math.max(0, ...entries.map((e) => e.id)) + 1, date: new Date().toISOString(), title: title || "Untitled", text };
+      entries.push(current);
+    }
+    persist(); edit(current); toast("Entry saved");
+  }
+  function remove() {
+    if (!current || !confirm(`Delete entry #${current.id}?`)) return;
+    entries = entries.filter((e) => e !== current);
+    persist(); edit(null);
+  }
+  function render() {
+    const sorted = [...entries].sort((a, b) => b.id - a.id);
+    w.list.replaceChildren(...(sorted.length ? sorted.map((e) => h("button", { class: "jentry" + (e === current ? " sel" : ""), onclick: () => edit(e) },
+      h("b", {}, `#${e.id}  ${e.title}`), h("span", { class: "muted small" }, stamp(e.date)))) : [h("div", { class: "muted" }, "No entries yet.")]));
+  }
+  function load(list) {
+    entries = list.filter((e) => e && Number.isFinite(e.id)).map((e) => ({ id: e.id, date: e.date || new Date().toISOString(), title: String(e.title || "Untitled"), text: String(e.text || "") }));
+    persist(); edit(null);
+  }
+  return { build, load, get entries() { return entries; } };
+})();
+
 // ---------- tabs ----------
 Creation.build($("page-create"));
 Roller.build($("page-roll"));
+Journal.build($("page-journal"));
+const TABS = ["create", "roll", "journal"];
+let currentTab = "create";
 function show(tab) {
-  const roll = tab === "roll";
-  $("page-create").hidden = roll; $("page-roll").hidden = !roll;
-  $("tab-create").classList.toggle("active", !roll); $("tab-roll").classList.toggle("active", roll);
-  if (roll) Roller.setCharacter(Creation.toCharacter()); else Creation.fromCharacter(Roller.char);
+  if (tab === currentTab) return;
+  if (currentTab === "roll") Creation.fromCharacter(Roller.char);
+  if (tab === "roll") Roller.setCharacter(Creation.toCharacter());
+  currentTab = tab;
+  for (const t of TABS) { $("page-" + t).hidden = t !== tab; $("tab-" + t).classList.toggle("active", t === tab); }
 }
-$("tab-create").onclick = () => show("create");
-$("tab-roll").onclick = () => show("roll");
+for (const t of TABS) $("tab-" + t).onclick = () => show(t);

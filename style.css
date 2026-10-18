@@ -17,6 +17,13 @@ nav { display: flex; gap: 4px; padding: 0 16px; border-bottom: 1px solid var(--b
 .cols { display: flex; flex-wrap: wrap; gap: 16px; padding: 16px; align-items: flex-start; }
 .col { display: flex; flex-direction: column; gap: 16px; flex: 1 1 340px; min-width: 0; }
 .col.wide { flex: 2 1 460px; }
+.jlist { display: flex; flex-direction: column; gap: 4px; max-height: 560px; overflow-y: auto; }
+button.jentry { display: flex; flex-direction: column; align-items: flex-start; text-align: left; background: var(--field); color: var(--text);
+  border: 1px solid var(--border); border-radius: 5px; padding: 6px 10px; font: inherit; cursor: pointer; }
+button.jentry:hover { border-color: var(--teal); }
+button.jentry.sel { border-color: var(--teal); background: var(--panel); }
+#page-journal textarea { resize: vertical; margin-top: 8px; }
+#page-journal input[type=text] { margin-top: 6px; }
 .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
 .card > h3, h2 { margin: 0 0 8px; }
 h2 { font-size: 22px; }
