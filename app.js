@@ -156,6 +156,28 @@ function dropdown(onchange) {
   };
 }
 
+// A radio list whose options can carry hover tooltips.
+function radioGroup(name, onchange) {
+  let opts = [], value = "", disabled = false;
+  const el = h("div", { class: "rg" });
+  function draw() {
+    el.replaceChildren(...opts.map((o) => {
+      const inp = h("input", { type: "radio", name, checked: o.value === value, disabled,
+        onchange: () => { value = o.value; onchange(); } });
+      const lab = h("label", { class: disabled ? "disabled" : "" }, inp, o.label);
+      return o.tip ? Tip.attach(lab, o.tip) : lab;
+    }));
+  }
+  return {
+    el,
+    get value() { return value; },
+    set value(v) { value = v; draw(); },
+    get disabled() { return disabled; },
+    set disabled(v) { disabled = v; draw(); },
+    setOptions(list) { opts = list; if (!opts.some((o) => o.value === value)) value = opts[0]?.value ?? ""; draw(); },
+  };
+}
+
 // ---------- rules / character ----------
 const categoryOf = (t) => Object.keys(R.categories).find((c) => R.categories[c].includes(t));
 function outcomeFor(total) {
@@ -170,13 +192,17 @@ function newCharacter() {
     narrative: Object.fromEntries(R.creation.narrative_fields.map((f) => [f, ""])),
     category_bases: zero(Object.keys(R.categories)), talents: zero(TALENTS),
     giftings: zero(Object.keys(R.giftings)), background_skills: [], goal: "", allegiance: "",
-    flaws: [], inventory: [], stress: zero(Object.keys(R.categories)), experience: zero(Object.keys(R.categories)), photo: "", notes: {},
+    flaws: [], inventory: [], inventory_points: [], upgrades: zero(TALENTS), stress: zero(Object.keys(R.categories)), experience: zero(Object.keys(R.categories)), photo: "", notes: {},
   };
 }
 // Saves from before per-category buckets stored one number; start those afresh.
+// Category Bases are no longer used, so they are always zero.
 function normalizeCharacter(data) {
   const ch = { ...newCharacter(), ...data };
+  ch.category_bases = zero(Object.keys(R.categories));
   if (typeof ch.experience !== "object" || ch.experience === null) ch.experience = newCharacter().experience;
+  if (typeof ch.upgrades !== "object" || ch.upgrades === null) ch.upgrades = zero(TALENTS);
+  ch.inventory_points = (ch.inventory || []).map((_, i) => parseInt((ch.inventory_points || [])[i]) || 0);
   return ch;
 }
 const xpBucket = (req) => (req.gifting ? "Spiritual" : req.category);
@@ -192,13 +218,14 @@ function defaultCharacter() {
   for (const a of ["background_skills", "flaws", "inventory"]) ch[a] = (d[a] || []).map(String);
   applyCallingBonuses(ch);
   ch.notes = { ...R.notes };
+  ch.inventory_points = ch.inventory.map(() => 0);
   return ch;
 }
 const callingBonus = () => (ch) => R.calling_attribute_bonuses[ch.calling] || {};
 const catBonus = (ch, cat) => { const b = callingBonus()(ch); return b.category === cat ? b.amount || 0 : 0; };
 const talentBonus = (ch, t) => { const b = callingBonus()(ch); return (b.specific_talents || []).includes(t) ? b.amount || 0 : 0; };
 const effCategory = (ch, cat) => (ch.category_bases[cat] || 0) + catBonus(ch, cat);
-const effTalent = (ch, t) => (ch.talents[t] || 0) + talentBonus(ch, t);
+const effTalent = (ch, t) => (ch.talents[t] || 0) + talentBonus(ch, t) + ((ch.upgrades || {})[t] || 0);
 const pointsSpent = (ch) => [...Object.values(ch.category_bases), ...Object.values(ch.talents)].reduce((a, b) => a + b, 0);
 function validate(ch) {
   const c = R.creation, errors = [], spent = pointsSpent(ch);
@@ -224,7 +251,7 @@ function breakdown(ch, req) {
     parts[req.category] = effCategory(ch, req.category);
     if (req.talent) parts[req.talent] = effTalent(ch, req.talent);
   }
-  let stress = isGift ? 1 : 0, flawXp = 0;
+  let stress = 0, flawXp = 0;
   for (const key of req.modifiers) {
     const m = R.modifiers[key];
     if (m.applies_to === "talent" && isGift) throw new Error(m.label + " applies to talent rolls only.");
@@ -234,6 +261,8 @@ function breakdown(ch, req) {
     stress += m.stress || 0;
     flawXp = Math.max(flawXp, m.flaw_extra_xp || 0);
   }
+  const item = req.item;
+  if (item != null && item >= 0 && ch.inventory[item]) parts["Equipment: " + ch.inventory[item]] = (ch.inventory_points || [])[item] || 0;
   const stressCat = isGift ? "Spiritual" : req.category;
   const penalty = Math.floor((ch.stress[stressCat] || 0) / R.stress.points_per_penalty) * R.stress.penalty;
   if (penalty) parts["Stress penalty"] = -penalty;
@@ -269,8 +298,17 @@ function diceLabel(mode) {
 
 // ---------- creation page ----------
 const Creation = (() => {
-  const w = { narrative: {}, bases: {}, talents: {}, gifts: {}, notes: {} };
-  let stress = {}, experience = {}, photo = "", loading = false;
+  const w = { narrative: {}, bases: {}, talents: {}, gifts: {}, notes: {}, up: {}, catXp: {} };
+  let stress = {}, experience = {}, upgrades = {}, photo = "", loading = false;
+  // Spending Experience on a talent: costs 1 of its category's pool, refunded if lowered.
+  function upgrade(t) {
+    const cat = categoryOf(t), prev = upgrades[t] || 0;
+    let v = Math.max(0, parseInt(w.up[t].value) || 0);
+    v = Math.min(v, prev + (experience[cat] || 0));
+    experience[cat] = (experience[cat] || 0) - (v - prev);
+    upgrades[t] = v; w.up[t].value = v;
+    refresh();
+  }
   const intIn = (max) => h("input", { type: "number", min: 0, max, step: 1, value: 0, oninput: refresh });
   const txt = (label) => { const i = h("input", { type: "text", oninput: refresh }); return [i, h("label", { class: "f" }, label, i)]; };
   const filled = (list) => list.map((i) => i.value.trim()).filter(Boolean);
@@ -291,9 +329,14 @@ const Creation = (() => {
     }
     const talents = card("Talents");
     for (const [cat, ts] of Object.entries(R.categories)) {
-      w.bases[cat] = intIn(c.category_base_max);
-      const row = h("div", { class: "row talents" }, h("span", { class: "cat" }, cat), h("label", { class: "f" }, "Base", w.bases[cat]));
-      for (const t of ts) { w.talents[t] = intIn(c.specific_talent_max); row.append(h("label", { class: "f" }, t, w.talents[t])); }
+      w.catXp[cat] = h("span", { class: "muted small" });
+      const row = h("div", { class: "row talents" }, h("span", { class: "cat" }, cat, h("br"), w.catXp[cat]));
+      for (const t of ts) {
+        w.talents[t] = intIn(c.specific_talent_max);
+        w.up[t] = Tip.attach(h("input", { type: "number", min: 0, step: 1, value: 0, class: "upg", "aria-label": t + " Exp upgrade",
+          oninput: () => upgrade(t) }), () => helpFor.concept("Upgrade"));
+        row.append(h("label", { class: "f" }, t, w.talents[t], h("span", { class: "muted small" }, "Exp upgrade"), w.up[t]));
+      }
       talents.append(row);
     }
     w.bonus = h("div", { class: "muted" }); talents.append(w.bonus);
@@ -308,7 +351,13 @@ const Creation = (() => {
     const g = mk("Goal"); w.goal = g.i; more.append(g.l);
     const a = mk("Allegiance"); w.allegiance = a.i; a.i.placeholder = "Character name and relationship"; more.append(a.l);
     w.flaws = group(c.flaws, (i) => `Flaw ${i}`);
-    w.inventory = group(c.inventory_slots.max, (i) => `Inventory slot ${i}${i <= c.inventory_slots.min ? " *" : ""}`);
+    w.inventory = []; w.invPts = [];
+    for (let i = 1; i <= c.inventory_slots.max; i++) {
+      const name = h("input", { type: "text", oninput: refresh, "aria-label": "Inventory item " + i });
+      const pts = h("input", { type: "number", step: 1, value: 0, class: "invpts", oninput: refresh, "aria-label": "Item " + i + " points" });
+      w.inventory.push(name); w.invPts.push(pts);
+      more.append(h("div", { class: "row inv" }, h("span", { class: "muted small" }, "Item " + i), name, h("span", { class: "muted small" }, "Points"), pts));
+    }
 
     w.profileName = h("div", { style: "font-size:20px;font-weight:bold" });
     w.photoBox = h("div");
@@ -338,14 +387,18 @@ const Creation = (() => {
     for (const k in w.talents) ch.talents[k] = parseInt(w.talents[k].value) || 0;
     applyCallingBonuses(ch);
     ch.background_skills = filled(w.skills); ch.goal = w.goal.value.trim(); ch.allegiance = w.allegiance.value.trim();
-    ch.flaws = filled(w.flaws); ch.inventory = filled(w.inventory);
+    ch.flaws = filled(w.flaws);
+    const items = w.inventory.map((inp, i) => [inp.value.trim(), parseInt(w.invPts[i].value) || 0]).filter(([n]) => n);
+    ch.inventory = items.map(([n]) => n); ch.inventory_points = items.map(([, p]) => p);
+    ch.upgrades = { ...ch.upgrades, ...upgrades };
     ch.photo = photo; ch.stress = { ...ch.stress, ...stress }; ch.experience = { ...ch.experience, ...experience };
     ch.notes = Object.fromEntries(Object.entries(w.notes).map(([k, e]) => [k, e.value]));
     return ch;
   }
   function fromCharacter(ch) {
     loading = true;
-    stress = { ...ch.stress }; experience = { ...(ch.experience || {}) };
+    stress = { ...ch.stress }; experience = { ...(ch.experience || {}) }; upgrades = { ...(ch.upgrades || {}) };
+    for (const k in w.up) w.up[k].value = upgrades[k] || 0;
     w.name.value = ch.name || "";
     w.calling.value = ch.calling in R.callings ? ch.calling : "";
     w.motivation.value = ch.motivation in R.motivations ? ch.motivation : "";
@@ -355,6 +408,7 @@ const Creation = (() => {
     w.goal.value = ch.goal || ""; w.allegiance.value = ch.allegiance || "";
     for (const [inputs, vals] of [[w.skills, ch.background_skills], [w.flaws, ch.flaws], [w.inventory, ch.inventory]])
       inputs.forEach((inp, i) => (inp.value = (vals || [])[i] ?? ""));
+    w.invPts.forEach((inp, i) => (inp.value = (ch.inventory_points || [])[i] || 0));
     for (const k in w.notes) w.notes[k].value = k in (ch.notes || {}) ? ch.notes[k] : R.notes[k] || "";
     photo = ch.photo || "";
     loading = false;
@@ -363,6 +417,7 @@ const Creation = (() => {
   function refresh() {
     if (loading) return;
     const ch = toCharacter();
+    for (const cat in w.catXp) w.catXp[cat].textContent = `Exp ${experience[cat] || 0}`;
     w.points.textContent = "Talent points remaining: " + (c.talent_points - pointsSpent(ch));
     const granted = R.callings[ch.calling] || [];
     for (const g in w.gifts) w.gifts[g].textContent = granted.includes(g) ? "+" + c.gifting_bonus : "0";
@@ -411,19 +466,19 @@ const Roller = (() => {
   const request = () => {
     const g = s.kind === "gifting";
     return { category: s.category, talent: g ? "" : s.talent, gifting: g ? s.gifting : "",
-      modifiers: Object.keys(mods).filter((k) => mods[k] && !modBoxes[k].disabled), spend_xp: s.spend, mode: s.mode };
+      modifiers: Object.keys(mods).filter((k) => mods[k] && !modBoxes[k].disabled), spend_xp: s.spend, mode: s.mode,
+      item: w.equipSel.value === "" ? null : parseInt(w.equipSel.value) };
   };
 
   function build(root) {
     w.name = h("div", { style: "font-size:22px;font-weight:bold" }); w.calling = h("div", { class: "muted" });
-    w.sheet = h("div", { class: "muted small" });
     w.stress = {}; w.xp = {}; w.val = {}; w.talentBtn = {};
     const grid = h("div", { class: "tgrid" });
-    for (const head of ["", "Roll", "Stress", "Exp."]) {
-      const th = h("i", { class: "th" }, head);
-      grid.append(head ? Tip.attach(th, () => helpFor.concept(head)) : th);
-    }
     for (const [cat, ts] of Object.entries(R.categories)) {
+      for (const head of ["", "Roll", "Stress", "Exp."]) {
+        const th = h("i", { class: "th" }, head);
+        grid.append(head ? Tip.attach(th, () => helpFor.concept(head)) : th);
+      }
       const bg = `background:var(${CAT_COLOURS[cat] || "--accent"})`;
       w.stress[cat] = h("input", { type: "number", min: 0, max: R.stress.max, step: 1, "aria-label": cat + " stress", oninput: () => {
         ch.stress[cat] = Math.max(0, parseInt(w.stress[cat].value) || 0); renderValues(); preview(); } });
@@ -438,35 +493,46 @@ const Roller = (() => {
         grid.append(w.talentBtn[t], w.val[t], h("span"), h("span"));
       }
     }
-    const radio = (name, opts, get, set) => h("div", { class: "row" }, Object.entries(opts).map(([v, label]) =>
-      h("label", {}, h("input", { type: "radio", name, value: v, checked: get() === v, onchange: () => { set(v); preview(); } }), label)));
-    w.kindRadio = radio("kind", { talent: "Talent roll", gifting: "Gifting roll (non-talent action)" }, () => s.kind, (v) => { s.kind = v; applyKind(); });
+    const radio = (name, opts, get, set, tips = {}) => h("div", { class: "row" }, Object.entries(opts).map(([v, label]) => {
+      const lab = h("label", {}, h("input", { type: "radio", name, value: v, checked: get() === v, onchange: () => { set(v); preview(); } }), label);
+      return tips[v] ? Tip.attach(lab, () => helpFor.concept(tips[v])) : lab;
+    }));
+    w.kindRadio = radio("kind", { talent: "Talent roll", gifting: "Gifting roll (non-talent action)" }, () => s.kind, (v) => { s.kind = v; applyKind(); },
+      { talent: "Talent roll", gifting: "Gifting roll" });
     w.motivation = h("b", { style: "color:var(--teal)" });
-    w.workSel = dropdown(() => {
+    w.workSel = radioGroup("work", () => {
       const talent = R.motivations[ch.motivation]?.works[w.workSel.value];
       mods.motivation_work = !!talent; modBoxes.motivation_work.checked = !!talent;
       if (talent) selectTalent(talent); else preview();
     });
-    w.workLab = h("div", { class: "f" }, "Work", w.workSel.el);
     w.giftSel = dropdown(() => { s.gifting = w.giftSel.value; preview(); });
     w.giftLab = h("div", { class: "f" }, "Gifting", w.giftSel.el);
     w.modeRadio = radio("mode", MODE_LABELS, () => s.mode, (v) => (s.mode = v));
     const setup = card("Challenge", w.kindRadio, h("div", { class: "row" }, h("span", { class: "muted" }, "Motivation"), w.motivation),
-      w.workLab, w.giftLab, h("div", { class: "muted small" }, "Storyteller call"), w.modeRadio);
+      w.giftLab, Tip.attach(h("div", { class: "muted small" }, "Storyteller call"), () => helpFor.concept("Storyteller call")), w.modeRadio);
 
     const modCard = card("Optional modifiers (nominate each one)");
+    const modTip = { motivation_work: "Motivation Work", background_skill: "Background Skill", goal: "Goal", allegiance: "Allegiance", flaw: "Flaw" };
+    w.modText = {};
     for (const [key, m] of Object.entries(R.modifiers)) {
       if (m.applies_to === "gifting") continue;
       mods[key] = false;
       modBoxes[key] = h("input", { type: "checkbox", onchange: () => { mods[key] = modBoxes[key].checked; preview(); } });
-      // Motivation Work is driven by the Work dropdown, so its checkbox is not offered separately.
-      modCard.append(h("div", { hidden: key === "motivation_work" }, h("label", {}, modBoxes[key], `${m.label}  (${signed(m.value)}${m.stress ? `, +${m.stress} Stress` : ""})`)));
+      w.modText[key] = h("span", { class: "muted small" });
+      // Motivation Work is driven by the Work list below, so its checkbox is not offered separately.
+      const lab = h("label", {}, modBoxes[key], `${m.label}  (${signed(m.value)}${m.stress ? `, +${m.stress} Stress` : ""}) `, w.modText[key]);
+      modCard.append(h("div", { hidden: key === "motivation_work" }, modTip[key] ? Tip.attach(lab, () => helpFor.concept(modTip[key])) : lab));
     }
+    w.workHead = Tip.attach(h("div", { class: "muted small mh" }), () => helpFor.concept("Motivation Work"));
+    w.equipSel = radioGroup("equip", preview);
+    modCard.append(w.workHead, w.workSel.el,
+      Tip.attach(h("div", { class: "muted small mh" }, "Equipment (optional)"), () => helpFor.concept("Equipment")), w.equipSel.el);
     w.spend = h("input", { type: "number", min: 0, step: 1, value: 0, oninput: () => {
       s.spend = Math.max(0, parseInt(w.spend.value) || 0); preview(); } });
     w.spendLabel = h("span", {});
     const spendCard = card("Spend experience", h("div", { class: "row" }, w.spendLabel, w.spend));
-    w.preview = h("div", { class: "preview" });
+    Tip.attach(w.spendLabel, () => helpFor.concept("Spend experience"));
+    w.preview = Tip.attach(h("div", { class: "preview" }), () => helpFor.concept("Roll preview"));
 
     w.dice = h("div", { class: "dice" }); w.total = h("div", { class: "total" }, "-");
     w.outcome = h("div", { class: "outcome" }, "Roll the dice to begin");
@@ -482,8 +548,8 @@ const Roller = (() => {
       h("button", { class: "btn outline", onclick: () => pickJson(setCharacter) }, "Load character"));
     root.append(h("div", { class: "cols" },
       h("div", { class: "col" }, card("Character", w.name, w.calling, grid), w.saveLoad),
-      h("div", { class: "col wide" }, h("h2", {}, "Set up your roll"), setup, modCard, spendCard, w.preview, card("Quick reference", w.sheet)),
-      h("div", { class: "col" }, result, hist, w.roll)));
+      h("div", { class: "col wide" }, h("h2", {}, "Set up your roll"), setup, modCard, spendCard),
+      h("div", { class: "col" }, w.preview, result, w.roll, hist)));
     populateWorks();
     refreshAll();
   }
@@ -497,6 +563,7 @@ const Roller = (() => {
   function populateWorks() {
     const works = R.motivations[ch.motivation]?.works || {};
     w.motivation.textContent = ch.motivation || "-";
+    w.workHead.textContent = `Motivation Work${ch.motivation ? " (" + ch.motivation + ")" : ""}`;
     w.workSel.setOptions([{ value: "", label: "None" },
       ...Object.entries(works).map(([work, talent]) => ({ value: work, label: `${work}  (+${R.modifiers.motivation_work.value} ${talent})`,
         tip: () => helpFor.work(ch.motivation, work) }))]);
@@ -534,9 +601,12 @@ const Roller = (() => {
     w.giftSel.setOptions(Object.keys(R.giftings).map((g) => ({ value: g, label: `${g}  (${signed(ch.giftings[g] || 0)})`, tip: () => helpFor.gifting(g) })));
     w.giftSel.value = s.gifting;
     const j = (a) => a.join(", ") || "-";
-    w.sheet.innerHTML = [`<b>Goal:</b> ${esc(ch.goal || "-")}`, `<b>Allegiance:</b> ${esc(ch.allegiance || "-")}`,
-      `<b>Flaws:</b> ${esc(j(ch.flaws))}`, `<b>Background skills:</b> ${esc(j(ch.background_skills))}`,
-      `<b>Inventory:</b> ${esc(j(ch.inventory))}`].join("<br>");
+    w.modText.background_skill.textContent = j(ch.background_skills);
+    w.modText.goal.textContent = ch.goal || "-";
+    w.modText.allegiance.textContent = ch.allegiance || "-";
+    w.modText.flaw.textContent = j(ch.flaws);
+    w.equipSel.setOptions([{ value: "", label: "None" },
+      ...ch.inventory.map((n, i) => ({ value: String(i), label: `${n}  (${signed((ch.inventory_points || [])[i] || 0)})` }))]);
     applyKind();
     preview();
   }
@@ -603,7 +673,7 @@ const Roller = (() => {
     w.history.prepend(h("div", { class: "entry" }, h("div", {}, `${what}${tag}: ${r.total} - ${r.outcome} (${r.frame})`),
       h("div", { class: "muted small" }, terms.join("  |  ")), notes.length ? h("div", { class: "muted small" }, notes.join(", ")) : ""));
   }
-  function setCharacter(c) { ch = c; s.spend = 0; w.spend.value = 0; populateWorks(); refreshAll(); }
+  function setCharacter(c) { ch = c; s.spend = 0; w.spend.value = 0; w.equipSel.value = ""; populateWorks(); refreshAll(); }
   return { build, setCharacter, get char() { return ch; } };
 })();
 

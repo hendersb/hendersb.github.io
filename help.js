@@ -328,6 +328,52 @@ window.HELP = {
   "Roll": {
    "summary": "Your total for this talent: Category Base plus Specific Talent. A red number is the Stress penalty.",
    "detail": "The red -N shows the penalty from Stress in that category. It is applied automatically when you roll."
+  },
+  "Talent roll": {
+   "summary": "Roll 3d6 and add your Category Base and the Specific Talent you nominate.",
+   "detail": "Click a talent in the left panel to nominate it. Optional modifiers, the Stress penalty and any Experience you spend are then applied."
+  },
+  "Gifting roll": {
+   "summary": "For actions that are not a standard talent roll. Roll 3d6 plus your Gifting value.",
+   "detail": "Giftings are resolved separately from talents and use the Spiritual stress and experience pools. Using a Gifting costs no Stress."
+  },
+  "Storyteller call": {
+   "summary": "Only used when the Storyteller calls Advantage or Disadvantage. It applies to one roll, then resets.",
+   "detail": "Advantage rolls 4d6 and keeps the highest 3. Disadvantage rolls 4d6 and keeps the lowest 3. They do not stack or cancel."
+  },
+  "Motivation Work": {
+   "summary": "Optional. Adds +{work_bonus} to the Work's own talent, at the cost of +{work_stress} Stress in that category.",
+   "detail": "Choosing a Work selects its talent automatically. A Work only boosts its own talent."
+  },
+  "Background Skill": {
+   "summary": "Optional. +2 to a talent roll where one of your background skills clearly applies (up to 3 skills)."
+  },
+  "Goal": {
+   "summary": "Optional. +2 to any roll that relates to your chosen Goal.",
+   "detail": "Goal, Allegiance and Flaw can stack on the same roll if it makes sense in the story."
+  },
+  "Allegiance": {
+   "summary": "Optional. +2 to a support action for the linked character that shows the stated relationship.",
+   "detail": "Goal, Allegiance and Flaw can stack on the same roll if it makes sense in the story."
+  },
+  "Flaw": {
+   "summary": "Optional. -2 to any roll that relates to one of your flaws.",
+   "detail": "If the roll Fails, you gain +2 extra Experience on top of the normal +1. Goal, Allegiance and Flaw can stack on the same roll."
+  },
+  "Equipment": {
+   "summary": "Optional. Pick one item to add its point bonus to the roll.",
+   "detail": "Items and their point values are entered on the Character Sheet."
+  },
+  "Spend experience": {
+   "summary": "Spend points from the category's Exp. pool; each adds +{xp_bonus} to the total.",
+   "detail": "Declare spending before the outcome is known. Gifting rolls use the Spiritual pool."
+  },
+  "Roll preview": {
+   "summary": "The total you will add to the dice, built from every selected term."
+  },
+  "Upgrade": {
+   "summary": "Spend Experience from this category to raise this talent permanently, beyond the creation cap.",
+   "detail": "Each point costs 1 Experience from the talent's own category."
   }
  }
 };

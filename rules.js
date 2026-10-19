@@ -58,7 +58,7 @@ window.RULES = {
   }
  ],
  "creation": {
-  "talent_points": 16,
+  "talent_points": 15,
   "category_base_max": 2,
   "specific_talent_max": 3,
   "gifting_bonus": 3,
@@ -68,8 +68,8 @@ window.RULES = {
   "allegiances": 1,
   "flaws": 2,
   "inventory_slots": {
-   "min": 1,
-   "max": 4
+   "min": 0,
+   "max": 16
   },
   "narrative_fields": [
    "Age",
@@ -105,19 +105,19 @@ window.RULES = {
   },
   "background_skill": {
    "label": "Background Skill",
-   "value": 1,
+   "value": 2,
    "stress": 0,
    "applies_to": "talent"
   },
   "goal": {
    "label": "Goal",
-   "value": 1,
+   "value": 2,
    "stress": 0,
    "applies_to": "any"
   },
   "allegiance": {
    "label": "Allegiance",
-   "value": 1,
+   "value": 2,
    "stress": 0,
    "applies_to": "any"
   },
@@ -155,19 +155,19 @@ window.RULES = {
    "Character Description": "A quiet, thoughtful wanderer."
   },
   "category_bases": {
-   "Physical": 1,
-   "Mental": 1,
-   "Emotional": 1,
-   "Spiritual": 1
+   "Physical": 0,
+   "Mental": 0,
+   "Emotional": 0,
+   "Spiritual": 0
   },
   "talents": {
-   "Strength": 1,
+   "Strength": 2,
    "Agility": 1,
    "Dexterity": 1,
-   "Intelligence": 1,
+   "Intelligence": 2,
    "Education": 1,
    "Resilience": 1,
-   "Influence": 1,
+   "Influence": 2,
    "Empathy": 1,
    "Courage": 1,
    "Perception": 1,
@@ -204,13 +204,13 @@ window.RULES = {
   "Occupation": "What does your character do for a living, or did before the story begins?",
   "Distinguishing Features": "Scars, tattoos, a limp, a voice - anything people remember on meeting them.",
   "Character Description": "A short paragraph: personality, manner and how others first see them.",
-  "Talents": "Spend the full point pool across the four Category Bases and the 12 Specific Talents. Rolls add the Base plus the Specific Talent, so spread points to match your concept.",
+  "Talents": "Spend the full point pool across the 12 Specific Talents. Spread points to match your concept.",
   "Giftings": "Read-only. The three Giftings granted by your Calling start at +3 and are used only for non-talent actions.",
-  "Background skills": "Up to 3 skills from your history. Each gives +1 to a talent roll where it clearly applies.",
-  "Goal": "One thing your character wants. Gives +1 to rolls that relate to it.",
-  "Allegiance": "Name another character and the bond. Gives +1 when you support them in a way that shows the bond.",
+  "Background skills": "Up to 3 skills from your history. Each gives +2 to a talent roll where it clearly applies.",
+  "Goal": "One thing your character wants. Gives +2 to rolls that relate to it.",
+  "Allegiance": "Name another character and the bond. Gives +2 when you support them in a way that shows the bond.",
   "Flaws": "Two weaknesses. Each gives -2 to related rolls, but a Fail on a flawed roll earns +2 extra Experience.",
-  "Inventory": "1 to 4 items for now. Item effects are not defined yet, so note why each matters."
+  "Inventory": "Up to 16 items. Give each a name and a point bonus; the bonus is added to a roll when you select the item."
  },
  "callings": {
   "Apostolic": [

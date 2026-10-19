@@ -95,3 +95,11 @@ button.talent.sel { background: var(--teal); color: var(--bg); font-weight: bold
 #toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--panel);
   border: 1px solid var(--accent); padding: 10px 18px; border-radius: 8px; }
 [hidden] { display: none !important; }
+.row.talents label.f { width: 110px; }
+.row.talents .cat { width: 80px; }
+input.upg { width: 100%; }
+.row.inv input[type=text] { flex: 1; min-width: 120px; }
+.row.inv input.invpts { width: 64px; }
+.rg label { display: block; margin: 3px 0; font-size: 14px; }
+.mh { margin-top: 10px; }
+.tgrid .th { margin-top: 6px; }
