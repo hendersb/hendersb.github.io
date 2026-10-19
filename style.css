@@ -30,7 +30,22 @@ h2 { font-size: 22px; }
 h3 { font-size: 15px; }
 .muted { color: var(--muted); }
 .small { font-size: 13px; }
-label.f { display: block; margin: 6px 0; font-size: 13px; color: var(--muted); }
+label.f, div.f { display: block; margin: 6px 0; font-size: 13px; color: var(--muted); }
+#tip { position: fixed; z-index: 1000; max-width: 340px; max-height: 70vh; overflow-y: auto; background: var(--panel); color: var(--text);
+  border: 1px solid var(--teal); border-radius: 8px; padding: 8px 12px; font-size: 13px; line-height: 1.4; box-shadow: 0 6px 20px rgba(0,0,0,.5); }
+#tip b { color: var(--teal); display: block; margin-bottom: 2px; }
+#tip p { margin: 6px 0 0; }
+#tip ul { margin: 6px 0 0; padding-left: 18px; }
+#tip .tip-more { display: inline-block; margin-top: 4px; color: var(--teal); }
+.dd { position: relative; }
+.dd-btn { width: 100%; display: flex; justify-content: space-between; align-items: center; background: var(--field); color: var(--text);
+  border: 1px solid var(--border); border-radius: 5px; padding: 6px 8px; font: inherit; cursor: pointer; }
+.dd-btn:disabled { opacity: .5; cursor: default; }
+.dd-list { position: absolute; z-index: 900; left: 0; right: 0; top: 100%; margin-top: 2px; background: var(--field); border: 1px solid var(--teal);
+  border-radius: 5px; max-height: 280px; overflow-y: auto; }
+.dd-item { padding: 6px 8px; cursor: pointer; color: var(--text); }
+.dd-item:hover, .dd-item:focus { background: var(--teal); color: var(--bg); outline: none; }
+.dd-item.sel { font-weight: bold; }
 input, select, textarea { width: 100%; background: var(--field); color: var(--text); border: 1px solid var(--border);
   border-radius: 5px; padding: 6px 8px; font: inherit; }
 input:focus, select:focus, textarea:focus { outline: none; border-color: var(--teal); }

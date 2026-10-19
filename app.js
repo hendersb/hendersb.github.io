@@ -52,6 +52,110 @@ function pickJson(onChar) {
   input.click();
 }
 
+// ---------- tooltips (text comes from help.yaml) ----------
+const HELP = window.HELP || {};
+const HELP_VARS = {
+  work_bonus: R.modifiers.motivation_work.value, work_stress: R.modifiers.motivation_work.stress,
+  gifting_bonus: R.creation.gifting_bonus, gifting_bonus_count: R.creation.gifting_bonus_count,
+  works_per_motivation: 4, points_per_penalty: R.stress.points_per_penalty, penalty: R.stress.penalty,
+  max_stress: R.stress.max, xp_bonus: R.experience.points_per_bonus,
+};
+const fill = (t) => String(t ?? "").replace(/\{(\w+)\}/g, (m, k) => (k in HELP_VARS ? HELP_VARS[k] : m));
+const paras = (...texts) => texts.filter(Boolean).map((t) => h("p", {}, fill(t)));
+// Each builder returns {title, summary, detail: () => Node[]} or null when no text exists yet.
+const helpFor = {
+  talent(t) {
+    const e = HELP.talents?.[t];
+    return e?.summary ? { title: t, summary: fill(e.summary), detail: e.detail && e.detail !== e.summary ? () => paras(e.detail) : null } : null;
+  },
+  gifting(g) {
+    const e = HELP.giftings?.[g];
+    if (!e?.summary) return null;
+    return { title: g, summary: fill(e.summary), detail: () => [...paras(e.detail !== e.summary ? e.detail : "", e.use),
+      ...Object.entries(e.levels || {}).map(([lvl, txt]) => h("p", {}, h("b", {}, lvl + ": "), fill(txt)))] };
+  },
+  work(motivation, work) {
+    const m = HELP.motivations?.[motivation], e = m?.works?.[work];
+    if (!e?.summary) return null;
+    const talent = R.motivations[motivation].works[work];
+    return { title: `${work} (+${HELP_VARS.work_bonus} ${talent})`, summary: fill(e.summary),
+      detail: () => [...paras(m.intro), h("ul", {}, (e.uses || []).map((u) => h("li", {}, fill(u))))] };
+  },
+  concept(name) {
+    const e = HELP.concepts?.[name];
+    return e?.summary ? { title: name, summary: fill(e.summary), detail: e.detail ? () => paras(e.detail) : null } : null;
+  },
+};
+const Tip = (() => {
+  const box = h("div", { id: "tip", hidden: true });
+  document.body.append(box);
+  let target = null, content = null, pinned = false, timer;
+  function render() {
+    box.replaceChildren(h("b", {}, content.title));
+    if (!(pinned && content.detail)) box.append(h("div", {}, content.summary)); // the detail already repeats the summary
+    if (!content.detail) return;
+    if (pinned) box.append(h("div", { class: "tip-detail" }, content.detail()));
+    else box.append(h("a", { class: "tip-more", href: "#", onclick: (e) => { e.preventDefault(); pinned = true; render(); place(); } }, "More..."));
+  }
+  function place() {
+    const r = target.getBoundingClientRect(), b = box.getBoundingClientRect(), pad = 8;
+    let x = r.right + pad, y = r.top;
+    if (x + b.width > innerWidth - pad) x = Math.max(pad, r.left - b.width - pad);
+    if (x < pad || (r.left < b.width + pad && r.right + b.width + pad > innerWidth)) { x = Math.max(pad, r.left); y = r.bottom + 4; }
+    y = Math.min(y, innerHeight - b.height - pad);
+    box.style.left = Math.max(pad, x) + "px"; box.style.top = Math.max(pad, y) + "px";
+  }
+  function show(el, c) {
+    clearTimeout(timer);
+    if (pinned && el !== target) pinned = false;
+    target = el; content = c; box.hidden = false; render(); place();
+  }
+  function hide() { if (pinned) return; clearTimeout(timer); box.hidden = true; }
+  function leave() { clearTimeout(timer); timer = setTimeout(hide, 180); }
+  function close() { pinned = false; clearTimeout(timer); box.hidden = true; }
+  box.addEventListener("mouseenter", () => clearTimeout(timer));
+  box.addEventListener("mouseleave", leave);
+  document.addEventListener("mousedown", (e) => { if (!box.hidden && !box.contains(e.target) && !target?.contains(e.target)) close(); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") close(); });
+  function attach(el, getContent) {
+    const on = () => { const c = getContent(); if (c) show(el, c); };
+    el.addEventListener("mouseenter", on); el.addEventListener("focus", on);
+    el.addEventListener("mouseleave", leave); el.addEventListener("blur", leave);
+    return el;
+  }
+  return { attach, close };
+})();
+
+// A styled dropdown so each option can carry its own hover tooltip (native <option>s cannot).
+function dropdown(onchange) {
+  let opts = [], value = "", open = false;
+  const text = h("span", {});
+  const btn = h("button", { type: "button", class: "dd-btn", onclick: () => toggle(!open) }, text, h("span", { class: "dd-arrow" }, "\u25BE"));
+  const list = h("div", { class: "dd-list", role: "listbox", hidden: true });
+  const el = h("div", { class: "dd" }, btn, list);
+  function toggle(v) { open = v && !btn.disabled; list.hidden = !open; if (!open) Tip.close(); }
+  function draw() {
+    const cur = opts.find((o) => o.value === value) || opts[0];
+    text.textContent = cur ? cur.label : "";
+    list.replaceChildren(...opts.map((o) => {
+      const item = h("div", { class: "dd-item" + (o.value === value ? " sel" : ""), role: "option", tabindex: 0,
+        onclick: () => { value = o.value; draw(); toggle(false); onchange(); },
+        onkeydown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); item.click(); } } }, o.label);
+      return o.tip ? Tip.attach(item, o.tip) : item;
+    }));
+  }
+  document.addEventListener("mousedown", (e) => { if (open && !el.contains(e.target) && !$("tip").contains(e.target)) toggle(false); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && open) toggle(false); });
+  return {
+    el,
+    get value() { return value; },
+    set value(v) { value = v; draw(); },
+    get disabled() { return btn.disabled; },
+    set disabled(v) { btn.disabled = v; if (v) toggle(false); },
+    setOptions(list_) { opts = list_; if (!opts.some((o) => o.value === value)) value = opts[0]?.value ?? ""; draw(); },
+  };
+}
+
 // ---------- rules / character ----------
 const categoryOf = (t) => Object.keys(R.categories).find((c) => R.categories[c].includes(t));
 function outcomeFor(total) {
@@ -209,7 +313,7 @@ const Creation = (() => {
     w.profileName = h("div", { style: "font-size:20px;font-weight:bold" });
     w.photoBox = h("div");
     const profile = card("Profile", h("div", { class: "row", style: "align-items:flex-start" }, w.photoBox,
-      h("div", {}, w.profileName, h("button", { class: "btn outline", onclick: pickPhoto }, "Upload photo..."))));
+      h("div", {}, w.profileName, h("button", { class: "btn outline", onclick: pickPhoto }, "Update Image"))));
     const notes = h("div", { class: "col" }, h("h2", {}, "Helper notes"));
     for (const k of [...["Name", "Calling", "Motivation"], ...c.narrative_fields,
       ...["Talents", "Giftings", "Background skills", "Goal", "Allegiance", "Flaws", "Inventory"]]) {
@@ -315,18 +419,22 @@ const Roller = (() => {
     w.sheet = h("div", { class: "muted small" });
     w.stress = {}; w.xp = {}; w.val = {}; w.talentBtn = {};
     const grid = h("div", { class: "tgrid" });
-    for (const head of ["", "Roll", "Stress", "Exp."]) grid.append(h("i", { class: "th" }, head));
+    for (const head of ["", "Roll", "Stress", "Exp."]) {
+      const th = h("i", { class: "th" }, head);
+      grid.append(head ? Tip.attach(th, () => helpFor.concept(head)) : th);
+    }
     for (const [cat, ts] of Object.entries(R.categories)) {
       const bg = `background:var(${CAT_COLOURS[cat] || "--accent"})`;
-      w.stress[cat] = h("input", { type: "number", min: 0, max: R.stress.max, step: 1, title: "Stress", oninput: () => {
+      w.stress[cat] = h("input", { type: "number", min: 0, max: R.stress.max, step: 1, "aria-label": cat + " stress", oninput: () => {
         ch.stress[cat] = Math.max(0, parseInt(w.stress[cat].value) || 0); renderValues(); preview(); } });
-      w.xp[cat] = h("input", { type: "number", min: 0, step: 1, title: "Experience", oninput: () => {
+      w.xp[cat] = h("input", { type: "number", min: 0, step: 1, "aria-label": cat + " experience", oninput: () => {
         ch.experience[cat] = Math.max(0, parseInt(w.xp[cat].value) || 0); preview(); } });
+      Tip.attach(w.stress[cat], () => helpFor.concept("Stress")); Tip.attach(w.xp[cat], () => helpFor.concept("Exp."));
       grid.append(h("b", { class: "band first", style: bg }, cat), h("span", { class: "band", style: bg }),
         h("span", { class: "band", style: bg }, w.stress[cat]), h("span", { class: "band last", style: bg }, w.xp[cat]));
       for (const t of ts) {
-        w.talentBtn[t] = h("button", { class: "talent", title: "Roll " + t, onclick: () => selectTalent(t) }, t);
-        w.val[t] = h("span", { class: "tval" });
+        w.talentBtn[t] = Tip.attach(h("button", { class: "talent", onclick: () => selectTalent(t) }, t), () => helpFor.talent(t));
+        w.val[t] = Tip.attach(h("span", { class: "tval" }), () => helpFor.concept("Roll"));
         grid.append(w.talentBtn[t], w.val[t], h("span"), h("span"));
       }
     }
@@ -334,14 +442,14 @@ const Roller = (() => {
       h("label", {}, h("input", { type: "radio", name, value: v, checked: get() === v, onchange: () => { set(v); preview(); } }), label)));
     w.kindRadio = radio("kind", { talent: "Talent roll", gifting: "Gifting roll (non-talent action)" }, () => s.kind, (v) => { s.kind = v; applyKind(); });
     w.motivation = h("b", { style: "color:var(--teal)" });
-    w.workSel = h("select", { onchange: () => {
+    w.workSel = dropdown(() => {
       const talent = R.motivations[ch.motivation]?.works[w.workSel.value];
       mods.motivation_work = !!talent; modBoxes.motivation_work.checked = !!talent;
       if (talent) selectTalent(talent); else preview();
-    } });
-    w.workLab = h("label", { class: "f" }, "Work", w.workSel);
-    w.giftSel = h("select", { onchange: () => { s.gifting = w.giftSel.value; preview(); } });
-    w.giftLab = h("label", { class: "f" }, "Gifting", w.giftSel);
+    });
+    w.workLab = h("div", { class: "f" }, "Work", w.workSel.el);
+    w.giftSel = dropdown(() => { s.gifting = w.giftSel.value; preview(); });
+    w.giftLab = h("div", { class: "f" }, "Gifting", w.giftSel.el);
     w.modeRadio = radio("mode", MODE_LABELS, () => s.mode, (v) => (s.mode = v));
     const setup = card("Challenge", w.kindRadio, h("div", { class: "row" }, h("span", { class: "muted" }, "Motivation"), w.motivation),
       w.workLab, w.giftLab, h("div", { class: "muted small" }, "Storyteller call"), w.modeRadio);
@@ -389,8 +497,9 @@ const Roller = (() => {
   function populateWorks() {
     const works = R.motivations[ch.motivation]?.works || {};
     w.motivation.textContent = ch.motivation || "-";
-    w.workSel.replaceChildren(h("option", { value: "" }, "None"),
-      ...Object.entries(works).map(([work, talent]) => h("option", { value: work }, `${work}  (+${R.modifiers.motivation_work.value} ${talent})`)));
+    w.workSel.setOptions([{ value: "", label: "None" },
+      ...Object.entries(works).map(([work, talent]) => ({ value: work, label: `${work}  (+${R.modifiers.motivation_work.value} ${talent})`,
+        tip: () => helpFor.work(ch.motivation, work) }))]);
     clearWork();
   }
   function clearWork() {
@@ -422,7 +531,7 @@ const Roller = (() => {
     w.calling.textContent = callingText();
     renderValues();
     for (const cat of Object.keys(R.categories)) { w.stress[cat].value = ch.stress[cat] || 0; w.xp[cat].value = ch.experience[cat] || 0; }
-    w.giftSel.replaceChildren(...Object.keys(R.giftings).map((g) => h("option", { value: g }, `${g}  (${signed(ch.giftings[g] || 0)})`)));
+    w.giftSel.setOptions(Object.keys(R.giftings).map((g) => ({ value: g, label: `${g}  (${signed(ch.giftings[g] || 0)})`, tip: () => helpFor.gifting(g) })));
     w.giftSel.value = s.gifting;
     const j = (a) => a.join(", ") || "-";
     w.sheet.innerHTML = [`<b>Goal:</b> ${esc(ch.goal || "-")}`, `<b>Allegiance:</b> ${esc(ch.allegiance || "-")}`,
