@@ -427,7 +427,10 @@ const Creation = (() => {
   function refresh() {
     if (loading) return;
     const ch = toCharacter();
-    for (const t in w.avail) w.avail[t].textContent = `(${experience[categoryOf(t)] || 0})`;
+    for (const t in w.avail) {
+      const n = experience[categoryOf(t)] || 0;
+      w.avail[t].textContent = n > 0 ? `(${n})` : "";
+    }
     w.points.textContent = "Talent points remaining: " + (c.talent_points - pointsSpent(ch));
     const granted = R.callings[ch.calling] || [];
     for (const g in w.gifts) w.gifts[g].textContent = granted.includes(g) ? "+" + c.gifting_bonus : "0";
