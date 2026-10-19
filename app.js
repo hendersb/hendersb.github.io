@@ -202,10 +202,15 @@ function normalizeCharacter(data) {
   ch.category_bases = zero(Object.keys(R.categories));
   if (typeof ch.experience !== "object" || ch.experience === null) ch.experience = newCharacter().experience;
   if (typeof ch.upgrades !== "object" || ch.upgrades === null) ch.upgrades = zero(TALENTS);
+  // Older saves held Exp per category; move it onto the category's first talent.
+  for (const [cat, ts] of Object.entries(R.categories)) {
+    if (cat !== "Spiritual" && ch.experience[cat]) { ch.experience[ts[0]] = (ch.experience[ts[0]] || 0) + ch.experience[cat]; ch.experience[cat] = 0; }
+  }
   ch.inventory_points = (ch.inventory || []).map((_, i) => parseInt((ch.inventory_points || [])[i]) || 0);
   return ch;
 }
-const xpBucket = (req) => (req.gifting ? "Spiritual" : req.category);
+// Experience is tracked per talent; gifting rolls use the "Spiritual" pool.
+const xpBucket = (req) => (req.gifting ? "Spiritual" : req.talent || req.category);
 function applyCallingBonuses(ch) {
   const granted = R.callings[ch.calling] || [];
   for (const g of Object.keys(R.giftings)) ch.giftings[g] = granted.includes(g) ? R.creation.gifting_bonus : 0;
@@ -288,7 +293,8 @@ function rollDice(ch, req) {
   const [outcome, idx] = outcomeFor(total);
   let xpGained = outcome.experience;
   if (outcome.experience) xpGained += flawXp;
-  ch.stress[bucket] = Math.min(R.stress.max, (ch.stress[bucket] || 0) + stress);
+  const stressCat = req.gifting ? "Spiritual" : req.category;
+  ch.stress[stressCat] = Math.min(R.stress.max, (ch.stress[stressCat] || 0) + stress);
   ch.experience[bucket] = (ch.experience[bucket] || 0) + xpGained - req.spend_xp;
   return { dice, dropped, breakdown: all, total, outcome: outcome.name, idx, frame: outcome.frame,
            xpGained, xpSpent: req.spend_xp, stressAdded: stress, mode: req.mode, xpCategory: bucket };
@@ -305,7 +311,7 @@ const Creation = (() => {
   // Raising a talent uses free creation points first (within the creation cap); anything beyond
   // that is paid from the talent's own category Experience. Lowering refunds Experience first.
   function talentChanged(t) {
-    const cat = categoryOf(t), prev = w.prev[t] || 0, up = upgrades[t] || 0;
+    const cat = t, prev = w.prev[t] || 0, up = upgrades[t] || 0;
     let v = Math.max(0, parseInt(w.talents[t].value) || 0);
     const delta = v - prev;
     if (delta > 0) {
@@ -346,7 +352,7 @@ const Creation = (() => {
       for (const t of ts) {
         w.talents[t] = intIn(t);
         w.avail[t] = Tip.attach(h("span", { class: "xpavail" }), () => helpFor.concept("Upgrade"));
-        row.append(h("label", { class: "f" }, t, " ", w.avail[t], w.talents[t]));
+        row.append(h("label", { class: "f" }, Tip.attach(h("span", {}, t), () => helpFor.talent(t)), " ", w.avail[t], w.talents[t]));
       }
       talents.append(row);
     }
@@ -428,7 +434,7 @@ const Creation = (() => {
     if (loading) return;
     const ch = toCharacter();
     for (const t in w.avail) {
-      const n = experience[categoryOf(t)] || 0;
+      const n = experience[t] || 0;
       w.avail[t].textContent = n > 0 ? `(${n})` : "";
     }
     w.points.textContent = "Talent points remaining: " + (c.talent_points - pointsSpent(ch));
@@ -495,15 +501,21 @@ const Roller = (() => {
       const bg = `background:var(${CAT_COLOURS[cat] || "--accent"})`;
       w.stress[cat] = h("input", { type: "number", min: 0, max: R.stress.max, step: 1, "aria-label": cat + " stress", oninput: () => {
         ch.stress[cat] = Math.max(0, parseInt(w.stress[cat].value) || 0); renderValues(); preview(); } });
-      w.xp[cat] = h("input", { type: "number", min: 0, step: 1, "aria-label": cat + " experience", oninput: () => {
-        ch.experience[cat] = Math.max(0, parseInt(w.xp[cat].value) || 0); preview(); } });
-      Tip.attach(w.stress[cat], () => helpFor.concept("Stress")); Tip.attach(w.xp[cat], () => helpFor.concept("Exp."));
+      const xpInput = (key, label) => {
+        const i = h("input", { type: "number", min: 0, step: 1, "aria-label": label + " experience", oninput: () => {
+          ch.experience[key] = Math.max(0, parseInt(i.value) || 0); preview(); } });
+        return Tip.attach(i, () => helpFor.concept("Exp."));
+      };
+      Tip.attach(w.stress[cat], () => helpFor.concept("Stress"));
+      // The Spiritual band's box holds the Exp used by gifting rolls; talents have their own boxes.
+      const bandXp = cat === "Spiritual" ? (w.xp[cat] = xpInput(cat, "Gifting")) : "";
       grid.append(h("b", { class: "band first", style: bg }, cat), h("span", { class: "band", style: bg }),
-        h("span", { class: "band", style: bg }, w.stress[cat]), h("span", { class: "band last", style: bg }, w.xp[cat]));
+        h("span", { class: "band", style: bg }, w.stress[cat]), h("span", { class: "band last", style: bg }, bandXp));
       for (const t of ts) {
         w.talentBtn[t] = Tip.attach(h("button", { class: "talent", onclick: () => selectTalent(t) }, t), () => helpFor.talent(t));
         w.val[t] = Tip.attach(h("span", { class: "tval" }), () => helpFor.concept("Roll"));
-        grid.append(w.talentBtn[t], w.val[t], h("span"), h("span"));
+        w.xp[t] = xpInput(t, t);
+        grid.append(w.talentBtn[t], w.val[t], h("span"), w.xp[t]);
       }
     }
     const radio = (name, opts, get, set, tips = {}) => h("div", { class: "row" }, Object.entries(opts).map(([v, label]) => {
@@ -610,7 +622,8 @@ const Roller = (() => {
     w.name.textContent = ch.name || "Unnamed";
     w.calling.textContent = callingText();
     renderValues();
-    for (const cat of Object.keys(R.categories)) { w.stress[cat].value = ch.stress[cat] || 0; w.xp[cat].value = ch.experience[cat] || 0; }
+    for (const cat of Object.keys(R.categories)) { w.stress[cat].value = ch.stress[cat] || 0; }
+    for (const k in w.xp) w.xp[k].value = ch.experience[k] || 0;
     w.giftSel.setOptions(Object.keys(R.giftings).map((g) => ({ value: g, label: `${g}  (${signed(ch.giftings[g] || 0)})`, tip: () => helpFor.gifting(g) })));
     w.giftSel.value = s.gifting;
     const j = (a) => a.join(", ") || "-";
@@ -624,7 +637,7 @@ const Roller = (() => {
     preview();
   }
   function preview() {
-    const bucket = s.kind === "gifting" ? "Spiritual" : s.category, available = ch.experience[bucket] || 0;
+    const bucket = s.kind === "gifting" ? "Spiritual" : s.talent, available = ch.experience[bucket] || 0;
     w.spend.max = available;
     w.spendLabel.textContent = `${bucket} points, ${available} available (each +${R.experience.points_per_bonus})`;
     if (s.spend > available) { s.spend = available; w.spend.value = available; }
