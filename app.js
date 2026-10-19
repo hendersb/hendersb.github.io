@@ -225,14 +225,16 @@ const callingBonus = () => (ch) => R.calling_attribute_bonuses[ch.calling] || {}
 const catBonus = (ch, cat) => { const b = callingBonus()(ch); return b.category === cat ? b.amount || 0 : 0; };
 const talentBonus = (ch, t) => { const b = callingBonus()(ch); return (b.specific_talents || []).includes(t) ? b.amount || 0 : 0; };
 const effCategory = (ch, cat) => (ch.category_bases[cat] || 0) + catBonus(ch, cat);
-const effTalent = (ch, t) => (ch.talents[t] || 0) + talentBonus(ch, t) + ((ch.upgrades || {})[t] || 0);
-const pointsSpent = (ch) => [...Object.values(ch.category_bases), ...Object.values(ch.talents)].reduce((a, b) => a + b, 0);
+const effTalent = (ch, t) => (ch.talents[t] || 0) + talentBonus(ch, t) ;
+// Talent values include Experience upgrades; only the rest were paid from creation points.
+const upgradeTotal = (ch) => Object.values(ch.upgrades || {}).reduce((a, b) => a + b, 0);
+const pointsSpent = (ch) => [...Object.values(ch.category_bases), ...Object.values(ch.talents)].reduce((a, b) => a + b, 0) - upgradeTotal(ch);
 function validate(ch) {
   const c = R.creation, errors = [], spent = pointsSpent(ch);
   if (spent !== c.talent_points) errors.push(`Spent ${spent} talent points; expected ${c.talent_points}.`);
   if (Math.min(...Object.values(ch.category_bases), ...Object.values(ch.talents)) < 0) errors.push("Talent values cannot be negative.");
   if (Object.values(ch.category_bases).some((v) => v > c.category_base_max)) errors.push(`Category Bases cannot exceed ${c.category_base_max} during creation.`);
-  if (Object.values(ch.talents).some((v) => v > c.specific_talent_max)) errors.push(`Specific Talents cannot exceed ${c.specific_talent_max} during creation.`);
+  if (Object.entries(ch.talents).some(([t, v]) => v - ((ch.upgrades || {})[t] || 0) > c.specific_talent_max)) errors.push(`Specific Talents cannot exceed ${c.specific_talent_max} during creation.`);
   if (!(ch.calling in R.callings)) errors.push("Choose a valid Calling.");
   if (ch.background_skills.length > c.max_background_skills) errors.push(`At most ${c.max_background_skills} background skills.`);
   if (ch.flaws.length !== c.flaws) errors.push(`Choose exactly ${c.flaws} flaws.`);
@@ -298,18 +300,29 @@ function diceLabel(mode) {
 
 // ---------- creation page ----------
 const Creation = (() => {
-  const w = { narrative: {}, bases: {}, talents: {}, gifts: {}, notes: {}, up: {}, catXp: {} };
+  const w = { narrative: {}, bases: {}, talents: {}, gifts: {}, notes: {}, avail: {}, prev: {} };
   let stress = {}, experience = {}, upgrades = {}, photo = "", loading = false;
-  // Spending Experience on a talent: costs 1 of its category's pool, refunded if lowered.
-  function upgrade(t) {
-    const cat = categoryOf(t), prev = upgrades[t] || 0;
-    let v = Math.max(0, parseInt(w.up[t].value) || 0);
-    v = Math.min(v, prev + (experience[cat] || 0));
-    experience[cat] = (experience[cat] || 0) - (v - prev);
-    upgrades[t] = v; w.up[t].value = v;
+  // Raising a talent uses free creation points first (within the creation cap); anything beyond
+  // that is paid from the talent's own category Experience. Lowering refunds Experience first.
+  function talentChanged(t) {
+    const cat = categoryOf(t), prev = w.prev[t] || 0, up = upgrades[t] || 0;
+    let v = Math.max(0, parseInt(w.talents[t].value) || 0);
+    const delta = v - prev;
+    if (delta > 0) {
+      const spent = Object.values(w.prev).reduce((a, b) => a + b, 0) - Object.values(upgrades).reduce((a, b) => a + b, 0);
+      const free = Math.max(0, c.talent_points - spent), room = Math.max(0, c.specific_talent_max - (prev - up));
+      const fromFree = Math.min(delta, free, room);
+      const needXp = Math.min(delta - fromFree, experience[cat] || 0);
+      v = prev + fromFree + needXp;
+      experience[cat] = (experience[cat] || 0) - needXp; upgrades[t] = up + needXp;
+    } else if (delta < 0) {
+      const refund = Math.min(-delta, up);
+      experience[cat] = (experience[cat] || 0) + refund; upgrades[t] = up - refund;
+    }
+    w.talents[t].value = v; w.prev[t] = v;
     refresh();
   }
-  const intIn = (max) => h("input", { type: "number", min: 0, max, step: 1, value: 0, oninput: refresh });
+  const intIn = (t) => h("input", { type: "number", min: 0, step: 1, value: 0, oninput: () => (loading ? refresh() : talentChanged(t)) });
   const txt = (label) => { const i = h("input", { type: "text", oninput: refresh }); return [i, h("label", { class: "f" }, label, i)]; };
   const filled = (list) => list.map((i) => i.value.trim()).filter(Boolean);
   const c = R.creation;
@@ -329,13 +342,11 @@ const Creation = (() => {
     }
     const talents = card("Talents");
     for (const [cat, ts] of Object.entries(R.categories)) {
-      w.catXp[cat] = h("span", { class: "muted small" });
-      const row = h("div", { class: "row talents" }, h("span", { class: "cat" }, cat, h("br"), w.catXp[cat]));
+      const row = h("div", { class: "row talents" }, h("span", { class: "cat" }, cat));
       for (const t of ts) {
-        w.talents[t] = intIn(c.specific_talent_max);
-        w.up[t] = Tip.attach(h("input", { type: "number", min: 0, step: 1, value: 0, class: "upg", "aria-label": t + " Exp upgrade",
-          oninput: () => upgrade(t) }), () => helpFor.concept("Upgrade"));
-        row.append(h("label", { class: "f" }, t, w.talents[t], h("span", { class: "muted small" }, "Exp upgrade"), w.up[t]));
+        w.talents[t] = intIn(t);
+        w.avail[t] = Tip.attach(h("span", { class: "xpavail" }), () => helpFor.concept("Upgrade"));
+        row.append(h("label", { class: "f" }, t, " ", w.avail[t], w.talents[t]));
       }
       talents.append(row);
     }
@@ -398,13 +409,12 @@ const Creation = (() => {
   function fromCharacter(ch) {
     loading = true;
     stress = { ...ch.stress }; experience = { ...(ch.experience || {}) }; upgrades = { ...(ch.upgrades || {}) };
-    for (const k in w.up) w.up[k].value = upgrades[k] || 0;
     w.name.value = ch.name || "";
     w.calling.value = ch.calling in R.callings ? ch.calling : "";
     w.motivation.value = ch.motivation in R.motivations ? ch.motivation : "";
     for (const f in w.narrative) w.narrative[f].value = (ch.narrative || {})[f] ?? "";
     for (const k in w.bases) w.bases[k].value = (ch.category_bases || {})[k] || 0;
-    for (const k in w.talents) w.talents[k].value = (ch.talents || {})[k] || 0;
+    for (const k in w.talents) { w.talents[k].value = (ch.talents || {})[k] || 0; w.prev[k] = (ch.talents || {})[k] || 0; }
     w.goal.value = ch.goal || ""; w.allegiance.value = ch.allegiance || "";
     for (const [inputs, vals] of [[w.skills, ch.background_skills], [w.flaws, ch.flaws], [w.inventory, ch.inventory]])
       inputs.forEach((inp, i) => (inp.value = (vals || [])[i] ?? ""));
@@ -417,7 +427,7 @@ const Creation = (() => {
   function refresh() {
     if (loading) return;
     const ch = toCharacter();
-    for (const cat in w.catXp) w.catXp[cat].textContent = `Exp ${experience[cat] || 0}`;
+    for (const t in w.avail) w.avail[t].textContent = `(${experience[categoryOf(t)] || 0})`;
     w.points.textContent = "Talent points remaining: " + (c.talent_points - pointsSpent(ch));
     const granted = R.callings[ch.calling] || [];
     for (const g in w.gifts) w.gifts[g].textContent = granted.includes(g) ? "+" + c.gifting_bonus : "0";
