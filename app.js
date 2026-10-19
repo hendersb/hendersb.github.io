@@ -192,7 +192,7 @@ function newCharacter() {
     narrative: Object.fromEntries(R.creation.narrative_fields.map((f) => [f, ""])),
     category_bases: zero(Object.keys(R.categories)), talents: zero(TALENTS),
     giftings: zero(Object.keys(R.giftings)), background_skills: [], goal: "", allegiance: "",
-    flaws: [], inventory: [], inventory_points: [], upgrades: zero(TALENTS), gifting_upgrades: zero(Object.keys(R.giftings)), stress: zero(Object.keys(R.categories)), experience: zero(Object.keys(R.categories)), photo: "", notes: {},
+    flaws: [], inventory: [], inventory_points: [], upgrades: zero(TALENTS), gifting_upgrades: zero(Object.keys(R.giftings)), stress: zero(Object.keys(R.categories)), experience: zero([...Object.keys(R.categories), "Giftings"]), photo: "", notes: {},
   };
 }
 // Saves from before per-category buckets stored one number; start those afresh.
@@ -210,8 +210,8 @@ function normalizeCharacter(data) {
   ch.inventory_points = (ch.inventory || []).map((_, i) => parseInt((ch.inventory_points || [])[i]) || 0);
   return ch;
 }
-// Experience is pooled per category; gifting rolls use the "Spiritual" pool.
-const xpBucket = (req) => (req.gifting ? "Spiritual" : req.category);
+// Experience is pooled per category; gifting rolls use the separate "Giftings" pool.
+const xpBucket = (req) => (req.gifting ? "Giftings" : req.category);
 const effGifting = (ch, g) => (ch.giftings[g] || 0) + ((ch.gifting_upgrades || {})[g] || 0);
 function applyCallingBonuses(ch) {
   const granted = R.callings[ch.calling] || [];
@@ -337,13 +337,13 @@ const Creation = (() => {
     let v = Math.max(base, parseInt(w.giftIn[g].value) || 0);
     const delta = v - prev;
     if (delta > 0) {
-      const bought = Math.min(delta, Math.floor((experience.Spiritual || 0) / cost));
+      const bought = Math.min(delta, Math.floor((experience.Giftings || 0) / cost));
       v = prev + bought;
-      experience.Spiritual = (experience.Spiritual || 0) - bought * cost; giftUp[g] = up + bought;
+      experience.Giftings = (experience.Giftings || 0) - bought * cost; giftUp[g] = up + bought;
     } else if (delta < 0) {
       const refund = Math.min(-delta, up);
       v = prev - refund;
-      experience.Spiritual = (experience.Spiritual || 0) + refund * cost; giftUp[g] = up - refund;
+      experience.Giftings = (experience.Giftings || 0) + refund * cost; giftUp[g] = up - refund;
     }
     w.giftIn[g].value = v; w.giftPrev[g] = v;
     refresh();
@@ -462,7 +462,7 @@ const Creation = (() => {
     for (const g in w.giftIn) {
       const v = giftBase(g) + (giftUp[g] || 0);
       w.giftIn[g].value = v; w.giftPrev[g] = v;
-      const n = experience.Spiritual || 0;
+      const n = experience.Giftings || 0;
       w.giftAvail[g].textContent = n > 0 ? `(${n})` : "";
     }
     const ab = R.calling_attribute_bonuses[ch.calling] || {};
@@ -537,6 +537,13 @@ const Roller = (() => {
         grid.append(w.talentBtn[t], w.val[t], h("span"), h("span"));
       }
     }
+    for (const head of ["", "", "", "Exp."]) grid.append(h("i", { class: "th" }, head));
+    const gbg = `background:var(${CAT_COLOURS.Spiritual})`;
+    w.xp.Giftings = h("input", { type: "number", min: 0, step: 1, "aria-label": "Giftings experience", oninput: () => {
+      ch.experience.Giftings = Math.max(0, parseInt(w.xp.Giftings.value) || 0); preview(); } });
+    Tip.attach(w.xp.Giftings, () => helpFor.concept("Exp."));
+    grid.append(h("b", { class: "band first", style: gbg }, "Giftings"), h("span", { class: "band", style: gbg }),
+      h("span", { class: "band", style: gbg }), h("span", { class: "band last", style: gbg }, w.xp.Giftings));
     const radio = (name, opts, get, set, tips = {}) => h("div", { class: "row" }, Object.entries(opts).map(([v, label]) => {
       const lab = h("label", {}, h("input", { type: "radio", name, value: v, checked: get() === v, onchange: () => { set(v); preview(); } }), label);
       return tips[v] ? Tip.attach(lab, () => helpFor.concept(tips[v])) : lab;
@@ -642,6 +649,7 @@ const Roller = (() => {
     w.calling.textContent = callingText();
     renderValues();
     for (const cat of Object.keys(R.categories)) { w.stress[cat].value = ch.stress[cat] || 0; w.xp[cat].value = ch.experience[cat] || 0; }
+    w.xp.Giftings.value = ch.experience.Giftings || 0;
     w.giftSel.setOptions(Object.keys(R.giftings).map((g) => ({ value: g, label: `${g}  (${signed(effGifting(ch, g))})`, tip: () => helpFor.gifting(g) })));
     w.giftSel.value = s.gifting;
     const j = (a) => a.join(", ") || "-";
@@ -655,7 +663,7 @@ const Roller = (() => {
     preview();
   }
   function preview() {
-    const bucket = s.kind === "gifting" ? "Spiritual" : s.category, available = ch.experience[bucket] || 0;
+    const bucket = s.kind === "gifting" ? "Giftings" : s.category, available = ch.experience[bucket] || 0;
     w.spend.max = available;
     w.spendLabel.textContent = `${bucket} points, ${available} available (each +${R.experience.points_per_bonus})`;
     if (s.spend > available) { s.spend = available; w.spend.value = available; }

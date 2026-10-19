@@ -323,7 +323,7 @@ window.HELP = {
   },
   "Exp.": {
    "summary": "Experience earned in this category, spent for a bonus on a later roll.",
-   "detail": "Fail and Profound results earn experience in the rolled category. Each point you spend on a roll adds {xp_bonus} to the total. Gifting rolls use the Spiritual pool."
+   "detail": "Fail and Profound results earn experience in the rolled category. Each point you spend on a roll adds {xp_bonus} to the total. Gifting rolls use the separate Giftings pool."
   },
   "Roll": {
    "summary": "Your total for this talent: Category Base plus Specific Talent. A red number is the Stress penalty.",
@@ -335,7 +335,7 @@ window.HELP = {
   },
   "Gifting roll": {
    "summary": "For actions that are not a standard talent roll. Roll 3d6 plus your Gifting value.",
-   "detail": "Giftings are resolved separately from talents and use the Spiritual stress and experience pools. Using a Gifting costs no Stress."
+   "detail": "Giftings are resolved separately from talents and use the Spiritual stress pool and the separate Giftings experience pool. Using a Gifting costs no Stress."
   },
   "Storyteller call": {
    "summary": "Only used when the Storyteller calls Advantage or Disadvantage. It applies to one roll, then resets.",
@@ -366,14 +366,14 @@ window.HELP = {
   },
   "Spend experience": {
    "summary": "Spend points from the category's Exp. pool; each adds +{xp_bonus} to the total.",
-   "detail": "Declare spending before the outcome is known. Gifting rolls use the Spiritual pool."
+   "detail": "Declare spending before the outcome is known. Gifting rolls use the separate Giftings pool."
   },
   "Roll preview": {
    "summary": "The total you will add to the dice, built from every selected term."
   },
   "Upgrade": {
    "summary": "Experience available in this category. Raise a talent or gifting with its arrows to spend it.",
-   "detail": "Each permanent +1 costs {upgrade_cost} Experience from the category (Spiritual for giftings) and talents can go beyond the creation cap. Lowering it refunds the Experience. Save your character when you are done."
+   "detail": "Each permanent +1 costs {upgrade_cost} Experience from the category (the Giftings pool for giftings) and talents can go beyond the creation cap. Lowering it refunds the Experience. Save your character when you are done."
   }
  }
 };
