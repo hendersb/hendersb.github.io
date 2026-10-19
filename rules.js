@@ -88,7 +88,8 @@ window.RULES = {
   "penalty": 1
  },
  "experience": {
-  "points_per_bonus": 1
+  "points_per_bonus": 1,
+  "upgrade_cost": 3
  },
  "modifiers": {
   "motivation_work": {

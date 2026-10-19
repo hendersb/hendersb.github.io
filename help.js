@@ -372,8 +372,8 @@ window.HELP = {
    "summary": "The total you will add to the dice, built from every selected term."
   },
   "Upgrade": {
-   "summary": "Experience available in this talent's category. Raise the talent with its arrows to spend it.",
-   "detail": "Each extra point costs 1 Experience from the talent's own category and can go beyond the creation cap. Lowering the talent refunds it. Save your character when you are done."
+   "summary": "Experience available in this category. Raise a talent or gifting with its arrows to spend it.",
+   "detail": "Each permanent +1 costs {upgrade_cost} Experience from the category (Spiritual for giftings) and talents can go beyond the creation cap. Lowering it refunds the Experience. Save your character when you are done."
   }
  }
 };

@@ -101,6 +101,6 @@ input.upg { width: 100%; }
 .row.inv input[type=text] { flex: 1; min-width: 120px; }
 .row.inv input.invpts { width: 64px; }
 .rg label { display: block; margin: 3px 0; font-size: 14px; }
-.mh { margin-top: 10px; }
+.mh { margin-top: 12px; font-size: 15px; font-weight: bold; }
 .tgrid .th { margin-top: 6px; }
 .xpavail { color: #6fcf97; font-weight: bold; }
