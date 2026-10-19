@@ -531,10 +531,12 @@ const Roller = (() => {
       if (talent) selectTalent(talent); else preview();
     });
     w.giftSel = dropdown(() => { s.gifting = w.giftSel.value; preview(); });
+    w.workHead = Tip.attach(h("div", { class: "muted small mh" }), () => helpFor.concept("Motivation Work"));
     w.giftLab = h("div", { class: "f" }, "Gifting", w.giftSel.el);
     w.modeRadio = radio("mode", MODE_LABELS, () => s.mode, (v) => (s.mode = v));
     const setup = card("Challenge", w.kindRadio, h("div", { class: "row" }, h("span", { class: "muted" }, "Motivation"), w.motivation),
-      w.giftLab, Tip.attach(h("div", { class: "muted small" }, "Storyteller call"), () => helpFor.concept("Storyteller call")), w.modeRadio);
+      w.giftLab, Tip.attach(h("div", { class: "muted small" }, "Storyteller call"), () => helpFor.concept("Storyteller call")), w.modeRadio,
+      w.workHead, w.workSel.el);
 
     const modCard = card("Optional modifiers (nominate each one)");
     const modTip = { motivation_work: "Motivation Work", background_skill: "Background Skill", goal: "Goal", allegiance: "Allegiance", flaw: "Flaw" };
@@ -548,10 +550,8 @@ const Roller = (() => {
       const lab = h("label", {}, modBoxes[key], `${m.label}  (${signed(m.value)}${m.stress ? `, +${m.stress} Stress` : ""}) `, w.modText[key]);
       modCard.append(h("div", { hidden: key === "motivation_work" }, modTip[key] ? Tip.attach(lab, () => helpFor.concept(modTip[key])) : lab));
     }
-    w.workHead = Tip.attach(h("div", { class: "muted small mh" }), () => helpFor.concept("Motivation Work"));
     w.equipSel = radioGroup("equip", preview);
-    modCard.append(w.workHead, w.workSel.el,
-      Tip.attach(h("div", { class: "muted small mh" }, "Equipment (optional)"), () => helpFor.concept("Equipment")), w.equipSel.el);
+    modCard.append(Tip.attach(h("div", { class: "muted small mh" }, "Equipment (optional)"), () => helpFor.concept("Equipment")), w.equipSel.el);
     w.spend = h("input", { type: "number", min: 0, step: 1, value: 0, oninput: () => {
       s.spend = Math.max(0, parseInt(w.spend.value) || 0); preview(); } });
     w.spendLabel = h("span", {});
