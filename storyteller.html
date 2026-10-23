@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Unorthodox RPG - Storyteller</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <img src="title.jpg" alt="Unorthodox" class="banner">
+  <nav>
+    <button id="tab-encounter" class="tab active">NPCs &amp; Roller</button>
+    <button id="tab-assets" class="tab">Maps &amp; Images</button>
+    <button id="tab-journal" class="tab">Journal</button>
+    <a class="tab navlink" href="index.html">Player app</a>
+    <div class="scenario">
+      <input id="s-name" type="text" placeholder="Scenario name" aria-label="Scenario name">
+      <button id="s-save" class="btn outline" title="Save everything to one scenario file">Save scenario</button>
+      <button id="s-load" class="btn outline" title="Load a scenario file">Load scenario</button>
+    </div>
+    <div id="music" class="music" hidden>
+      <button id="m-prev" title="Previous track">⏮</button>
+      <button id="m-play" title="Play music">▶</button>
+      <button id="m-next" title="Next track">⏭</button>
+      <span id="m-title" class="m-title">Music</span>
+      <input id="m-vol" type="range" min="0" max="100" value="50" title="Music volume">
+    </div>
+  </nav>
+</header>
+<main>
+  <section id="page-encounter"></section>
+  <section id="page-assets" hidden></section>
+  <section id="page-journal" hidden></section>
+</main>
+<div id="present" hidden></div>
+<div id="toast" hidden></div>
+<script src="rules.js"></script>
+<script src="storyteller.js"></script>
+<script src="tracks.js"></script>
+<script src="music.js"></script>
+</body>
+</html>
