@@ -239,11 +239,11 @@ const Encounter = (() => {
     w.preview.innerHTML = "";
     w.preview.append(h("b", {}, `${label} ${signed(sum)}`), h("br"), Object.entries(parts).map(([k, v]) => `${k} ${signed(v)}`).join("  "));
   }
-  const parts_ = (n) => {
-    const p = { [rs.category]: n.bases[rs.category] };
-    const penalty = stressPenalty(n.stress[rs.category]);
+  const parts_ = (n, cat = rs.category, mod = rs.mod) => {
+    const p = { [cat]: n.bases[cat] };
+    const penalty = stressPenalty(n.stress[cat]);
     if (penalty) p["Stress penalty"] = -penalty;
-    if (rs.mod) p.Modifier = rs.mod;
+    if (mod) p.Modifier = mod;
     return p;
   };
   function diceLabel(mode) {
@@ -253,12 +253,12 @@ const Encounter = (() => {
     w.dice.replaceChildren(...dice.map((d) => h("div", { class: "die" }, d)),
       ...dropped.map((d) => h("div", { class: "die dropped", title: "Dropped" }, d)));
   }
-  function rollDice() {
-    const extra = rs.mode === "normal" ? 0 : 1;
+  function rollDice(mode = rs.mode) {
+    const extra = mode === "normal" ? 0 : 1;
     const rolled = Array.from({ length: DICE_N + extra }, () => randInt(DICE_SIDES));
     let dice = rolled, dropped = [];
     if (extra) {
-      const at = rolled.indexOf(rs.mode === "advantage" ? Math.min(...rolled) : Math.max(...rolled));
+      const at = rolled.indexOf(mode === "advantage" ? Math.min(...rolled) : Math.max(...rolled));
       dice = rolled.filter((_, i) => i !== at);
       dropped = [rolled[at]];
     }
@@ -274,14 +274,23 @@ const Encounter = (() => {
         drawDice(Array.from({ length: count }, () => randInt(DICE_SIDES)));
         await new Promise((r) => setTimeout(r, 100));
       }
-      const { dice, dropped } = rollDice();
-      const all = { dice: dice.reduce((a, b) => a + b, 0), ...parts_(n) };
-      // Three of a kind always totals 20, whatever the modifiers.
-      if (dice.length > 1 && dice.every((d) => d === dice[0])) all["Triple (total fixed at 20)"] = 20 - Object.values(all).reduce((a, b) => a + b, 0);
-      const total = Object.values(all).reduce((a, b) => a + b, 0);
-      const [outcome, idx] = outcomeFor(total);
-      show({ dice, dropped, all, total, outcome, idx, who: n.name, cat: rs.category, mode: rs.mode });
+      show(resolve(n, rs.category, rs.mode, rs.mod));
     } finally { rolling = false; renderRoller(); }
+  }
+  function resolve(n, cat, mode, mod) {
+    const { dice, dropped } = rollDice(mode);
+    const all = { dice: dice.reduce((a, b) => a + b, 0), ...parts_(n, cat, mod) };
+    // Three of a kind always totals 20, whatever the modifiers.
+    if (dice.length > 1 && dice.every((d) => d === dice[0])) all["Triple (total fixed at 20)"] = 20 - Object.values(all).reduce((a, b) => a + b, 0);
+    const total = Object.values(all).reduce((a, b) => a + b, 0);
+    const [outcome, idx] = outcomeFor(total);
+    return { dice, dropped, all, total, outcome, idx, who: n.name, cat, mode };
+  }
+  // Used by the presentation bar: rolls instantly, records it in the history, and returns the result.
+  function quickRoll(n, cat, mode, mod) {
+    const r = resolve(n, cat, mode, mod);
+    show(r);
+    return r;
   }
   function show(r) {
     drawDice(r.dice, r.dropped);
@@ -296,7 +305,7 @@ const Encounter = (() => {
       h("div", { class: "muted small" }, Object.entries(r.all).map(([k, v]) => k === "dice" ? `Dice ${r.dice.join("+")} = ${v}` : `${k} ${signed(v)}`).join("  |  "))));
   }
   function refresh() { renderList(); renderEditor(); renderRoller(); }
-  return { build, refresh };
+  return { build, refresh, quickRoll };
 })();
 
 // ---------- players ----------
@@ -398,8 +407,79 @@ const Present = (() => {
   const caption = h("div", { class: "pcap" });
   const stage = h("div", { class: "pstage" }, wrap, caption);
   const panel = h("div", { class: "ppanel" });
+  const bar = Bar();
   const reopen = h("button", { class: "btn outline preopen", title: "Show control panel (H)", onclick: () => setPanel(true) }, "Panel");
-  box.append(stage, panel, reopen);
+  box.append(stage, panel, bar.el, reopen);
+
+  // Thin strip under the map: roll and stress controls for the selected NPC.
+  function Bar() {
+    const bs = { category: CATS[0], mode: "normal", barH: 96, open: true };
+    const el = h("div", { class: "pbar" });
+    const grip = h("div", { class: "pgrip", title: "Drag to resize" });
+    const toggle = h("button", { class: "btn outline small", title: "Collapse or expand this strip", onclick: () => { bs.open = !bs.open; layout(); } });
+    const who = h("b", { class: "pwho" });
+    const cat = h("select", { "aria-label": "Roll category", onchange: () => { bs.category = cat.value; } });
+    const mode = h("select", { "aria-label": "Roll mode", onchange: () => { bs.mode = mode.value; } },
+      Object.entries(MODE_LABELS).map(([v, label]) => h("option", { value: v }, label)));
+    const mod = h("input", { type: "number", step: 1, value: 0, "aria-label": "Roll modifier", title: "Modifier" });
+    const rollBtn = h("button", { class: "btn small", onclick: doRoll }, "Roll");
+    const res = h("span", { class: "pres" });
+    const stressBox = h("div", { class: "pstress" });
+    const body = h("div", { class: "pbody" }, who, cat, mode, h("span", { class: "muted small" }, "Mod"), mod, rollBtn, res, stressBox);
+    el.append(grip, h("div", { class: "prowbar" }, h("div", { class: "pbarmain" }, body), toggle));
+    const sw = {};
+    for (const c of CATS) {
+      sw[c] = { val: h("b", { class: "pval" }), pen: h("span", { class: "muted small" }) };
+      stressBox.append(h("span", { class: "pstat" }, h("span", { class: "cat", style: `color:var(${CAT_COLOURS[c]})`, title: c + " stress" }, c.slice(0, 4)),
+        h("button", { class: "btn outline step", "aria-label": "Remove " + c + " stress", title: "Remove 1 stress", onclick: () => bump(c, -1) }, "\u2212"),
+        sw[c].val,
+        h("button", { class: "btn outline step", "aria-label": "Add " + c + " stress", title: "Add 1 stress", onclick: () => bump(c, 1) }, "+"),
+        sw[c].pen));
+    }
+    function bump(c, d) {
+      const n = npc(); if (!n) return;
+      n.stress[c] = clampStress(n.stress[c] + d);
+      persist(); Encounter.refresh(); draw();
+    }
+    function doRoll() {
+      const n = npc(); if (!n) return;
+      const r = Encounter.quickRoll(n, bs.category, bs.mode, toInt(mod.value));
+      const colour = `var(${BAND_COLORS[Math.min(r.idx, BAND_COLORS.length - 1)]})`;
+      res.replaceChildren(...r.dice.map((d) => h("span", { class: "pdie" }, d)), ...r.dropped.map((d) => h("span", { class: "pdie dropped", title: "Dropped" }, d)),
+        h("b", { class: "ptotal", style: `color:${colour}` }, "= " + r.total), h("span", { style: `color:${colour}` }, " " + r.outcome.name),
+        h("span", { class: "muted small" }, ` (${r.outcome.frame})`));
+    }
+    function layout() {
+      el.classList.toggle("collapsed", !bs.open);
+      toggle.textContent = bs.open ? "\u25BE" : "\u25B4";
+      box.style.setProperty("--bar-h", (bs.open ? bs.barH : 34) + "px");
+    }
+    grip.addEventListener("pointerdown", (e) => {
+      e.preventDefault(); grip.setPointerCapture(e.pointerId);
+      bs.open = true;
+      const move = (ev) => { bs.barH = Math.round(Math.min(window.innerHeight * 0.5, Math.max(60, window.innerHeight - ev.clientY))); layout(); };
+      const up = () => { grip.removeEventListener("pointermove", move); grip.removeEventListener("pointerup", up); grip.removeEventListener("pointercancel", up); };
+      grip.addEventListener("pointermove", move); grip.addEventListener("pointerup", up); grip.addEventListener("pointercancel", up);
+    });
+    function draw() {
+      const n = npc();
+      body.classList.toggle("none", !n);
+      who.textContent = n ? n.name || "Unnamed" : "No NPC selected - click one in the list";
+      for (const x of [cat, mode, mod, rollBtn]) x.hidden = !n;
+      stressBox.hidden = !n;
+      if (!n) return;
+      cat.replaceChildren(...CATS.map((c) => h("option", { value: c }, `${c} ${n.bases[c]}`)));
+      cat.value = bs.category; mode.value = bs.mode;
+      for (const c of CATS) {
+        sw[c].val.textContent = n.stress[c];
+        const p = stressPenalty(n.stress[c]);
+        sw[c].pen.textContent = p ? `-${p}` : "";
+      }
+    }
+    layout();
+    return { el, draw };
+  }
+  const drawBar = () => bar.draw();
 
   // Clicking the empty area around the map moves between images; clicking the map itself clears the highlight.
   stage.addEventListener("click", (e) => {
@@ -417,7 +497,7 @@ const Present = (() => {
 
   function setPanel(show) {
     box.classList.toggle("nopanel", !show);
-    panel.hidden = !show; reopen.hidden = show;
+    panel.hidden = !show; bar.el.hidden = !show; reopen.hidden = show;
   }
   const current = () => state.assets[index];
   function drawStage() {
@@ -426,7 +506,7 @@ const Present = (() => {
     caption.textContent = a.showText ? [a.title, a.text].filter(Boolean).join("\n") : "";
     caption.hidden = !a.showText;
     state.selectedAsset = a.id;
-    drawTokens(); drawPanel();
+    drawTokens(); drawPanel(); drawBar();
   }
   function drawTokens() {
     const byKey = new Map(characters().map((c) => [c.key, c]));
@@ -466,7 +546,9 @@ const Present = (() => {
       persist(); drawTokens();
     }
     for (const t of tokens.children) t.classList.toggle("hl", t.dataset.key === key);
-    drawPanel();
+    // Selecting an NPC also makes it the target of the roll and stress controls.
+    if (key?.[0] === "n") { state.selectedNpc = Number(key.slice(1)); Encounter.refresh(); }
+    drawPanel(); drawBar();
   }
   function changeLook(c, color, dead) {
     if (color) c.obj.color = color;
