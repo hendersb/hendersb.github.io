@@ -76,10 +76,10 @@ const helpFor = {
   },
   work(motivation, work) {
     const m = HELP.motivations?.[motivation], e = m?.works?.[work];
-    if (!e?.summary) return null;
     const talent = R.motivations[motivation].works[work];
-    return { title: `${work} (+${HELP_VARS.work_bonus} ${talent})`, summary: fill(e.summary),
-      detail: () => [...paras(m.intro), h("ul", {}, (e.uses || []).map((u) => h("li", {}, fill(u))))] };
+    const summary = e?.summary || `Boosts ${talent} rolls by +${HELP_VARS.work_bonus}, at a cost of +${HELP_VARS.work_stress} Stress in that category.`;
+    return { title: `${work} (+${HELP_VARS.work_bonus} ${talent})`, summary: fill(summary),
+      detail: e?.summary || m?.intro ? () => [...paras(m?.intro), h("ul", {}, (e?.uses || []).map((u) => h("li", {}, fill(u))))] : null };
   },
   concept(name) {
     const e = HELP.concepts?.[name];
@@ -291,6 +291,8 @@ function rollDice(ch, req) {
     dropped = [rolled[at]];
   }
   const all = { dice: dice.reduce((a, b) => a + b, 0), ...parts };
+  // Three of a kind always totals 20, whatever the modifiers.
+  if (dice.length > 1 && dice.every((d) => d === dice[0])) all["Triple (total fixed at 20)"] = 20 - Object.values(all).reduce((a, b) => a + b, 0);
   const total = Object.values(all).reduce((a, b) => a + b, 0);
   const [outcome, idx] = outcomeFor(total);
   let xpGained = outcome.experience;
@@ -358,8 +360,8 @@ const Creation = (() => {
     const name = mk("Name"); w.name = name.i;
     w.calling = h("select", { onchange: refresh }, Object.keys(R.callings).map((k) => h("option", { value: k }, k)));
     w.motivation = h("select", { onchange: refresh }, Object.keys(R.motivations).map((k) => h("option", { value: k }, k)));
-    const identity = card("Identity", name.l, h("label", { class: "f" }, "Calling", w.calling),
-      h("label", { class: "f" }, "Motivation", w.motivation));
+    const identity = card("Identity", name.l, h("label", { class: "f" }, "Motivation", w.motivation),
+      h("label", { class: "f" }, "Calling", w.calling));
     for (const f of c.narrative_fields) {
       if (LONG_FIELDS.includes(f)) {
         w.narrative[f] = h("textarea", { rows: 3, oninput: refresh });
@@ -519,7 +521,7 @@ const Roller = (() => {
     w.stress = {}; w.xp = {}; w.val = {}; w.talentBtn = {};
     const grid = h("div", { class: "tgrid" });
     for (const [cat, ts] of Object.entries(R.categories)) {
-      for (const head of ["", "Roll", "Stress", "Exp."]) {
+      for (const head of ["", "Roll", "Exp.", "Stress"]) {
         const th = h("i", { class: "th" }, head);
         grid.append(head ? Tip.attach(th, () => helpFor.concept(head)) : th);
       }
@@ -530,20 +532,20 @@ const Roller = (() => {
         ch.experience[cat] = Math.max(0, parseInt(w.xp[cat].value) || 0); preview(); } });
       Tip.attach(w.stress[cat], () => helpFor.concept("Stress")); Tip.attach(w.xp[cat], () => helpFor.concept("Exp."));
       grid.append(h("b", { class: "band first", style: bg }, cat), h("span", { class: "band", style: bg }),
-        h("span", { class: "band", style: bg }, w.stress[cat]), h("span", { class: "band last", style: bg }, w.xp[cat]));
+        h("span", { class: "band", style: bg }, w.xp[cat]), h("span", { class: "band last", style: bg }, w.stress[cat]));
       for (const t of ts) {
         w.talentBtn[t] = Tip.attach(h("button", { class: "talent", onclick: () => selectTalent(t) }, t), () => helpFor.talent(t));
         w.val[t] = Tip.attach(h("span", { class: "tval" }), () => helpFor.concept("Roll"));
         grid.append(w.talentBtn[t], w.val[t], h("span"), h("span"));
       }
     }
-    for (const head of ["", "", "", "Exp."]) grid.append(h("i", { class: "th" }, head));
+    for (const head of ["", "", "Exp.", ""]) grid.append(h("i", { class: "th" }, head));
     const gbg = `background:var(${CAT_COLOURS.Spiritual})`;
     w.xp.Giftings = h("input", { type: "number", min: 0, step: 1, "aria-label": "Giftings experience", oninput: () => {
       ch.experience.Giftings = Math.max(0, parseInt(w.xp.Giftings.value) || 0); preview(); } });
     Tip.attach(w.xp.Giftings, () => helpFor.concept("Exp."));
     grid.append(h("b", { class: "band first", style: gbg }, "Giftings"), h("span", { class: "band", style: gbg }),
-      h("span", { class: "band", style: gbg }), h("span", { class: "band last", style: gbg }, w.xp.Giftings));
+      h("span", { class: "band", style: gbg }, w.xp.Giftings), h("span", { class: "band last", style: gbg }));
     const radio = (name, opts, get, set, tips = {}) => h("div", { class: "row" }, Object.entries(opts).map(([v, label]) => {
       const lab = h("label", {}, h("input", { type: "radio", name, value: v, checked: get() === v, onchange: () => { set(v); preview(); } }), label);
       return tips[v] ? Tip.attach(lab, () => helpFor.concept(tips[v])) : lab;
@@ -695,6 +697,9 @@ const Roller = (() => {
       showResult(r, req);
       s.mode = "normal";
       w.modeRadio.querySelector("input[value=normal]").checked = true;
+      for (const k of Object.keys(mods)) { mods[k] = false; modBoxes[k].checked = false; }
+      w.equipSel.value = "";
+      w.workSel.value = "";
       refreshAll();
     } finally { rolling = false; w.roll.disabled = false; }
   }

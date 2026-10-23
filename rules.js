@@ -69,7 +69,7 @@ window.RULES = {
   "flaws": 2,
   "inventory_slots": {
    "min": 0,
-   "max": 16
+   "max": 6
   },
   "narrative_fields": [
    "Age",
@@ -162,18 +162,18 @@ window.RULES = {
    "Spiritual": 0
   },
   "talents": {
-   "Strength": 2,
-   "Agility": 1,
-   "Dexterity": 1,
-   "Intelligence": 2,
-   "Education": 1,
-   "Resilience": 1,
-   "Influence": 2,
-   "Empathy": 1,
-   "Courage": 1,
-   "Perception": 1,
-   "Insight": 1,
-   "Intuition": 1
+   "Strength": 0,
+   "Agility": 0,
+   "Dexterity": 0,
+   "Intelligence": 0,
+   "Education": 0,
+   "Resilience": 0,
+   "Influence": 0,
+   "Empathy": 0,
+   "Courage": 0,
+   "Perception": 0,
+   "Insight": 0,
+   "Intuition": 0
   },
   "background_skills": [
    "Carpentry",
