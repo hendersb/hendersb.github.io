@@ -32,8 +32,15 @@ const card = (title, ...kids) => h("div", { class: "card" }, title ? h("h3", {},
 const signed = (n) => (n >= 0 ? "+" : "") + n;
 const randInt = (n) => 1 + Math.floor(Math.random() * n);
 const toInt = (v) => Math.trunc(Number(v)) || 0;
-const clampStress = (v) => Math.min(R.stress.max, Math.max(0, toInt(v)));
 const stressPenalty = (stress) => Math.floor(stress / R.stress.points_per_penalty) * R.stress.penalty;
+// NPCs use a single stress bucket: -1 to rolls per 2 stress. Stress may exceed max (100% or more is death).
+const NPC_MAX_STRESS = 20, NPC_STRESS_PER_PENALTY = 2;
+const npcPenalty = (n) => Math.floor(n.stress / NPC_STRESS_PER_PENALTY);
+const npcStatus = (n) => {
+  const f = n.stress / n.maxStress;
+  return f >= 1 ? "Dead" : f >= 0.75 ? "Critical stress" : f >= 0.5 ? "Serious stress" : f >= 0.25 ? "Moderate stress"
+    : f >= 0.1 ? "Slightly stressed" : "Normal";
+};
 let toastTimer;
 function toast(msg) {
   const t = $("toast");
@@ -90,7 +97,10 @@ function applyScenario(data) {
   state.npcs = (Array.isArray(data.npcs) ? data.npcs : []).filter((n) => n && Number.isFinite(n.id)).map((n) => ({
     id: n.id, name: String(n.name || "Unnamed"), notes: String(n.notes || ""),
     bases: Object.fromEntries(CATS.map((c) => [c, Math.max(0, toInt(n.bases?.[c]))])),
-    stress: Object.fromEntries(CATS.map((c) => [c, clampStress(n.stress?.[c])])),
+    goals: String(n.goals || ""), weaknesses: String(n.weaknesses || ""),
+    maxStress: Math.max(1, toInt(n.maxStress) || NPC_MAX_STRESS),
+    // Older scenarios kept a stress value per category; fold them into the single bucket.
+    stress: Math.max(0, typeof n.stress === "object" && n.stress ? Object.values(n.stress).reduce((a, v) => a + toInt(v), 0) : toInt(n.stress)),
     color: validColor(n.color, NPC_COLOR), dead: !!n.dead }));
   state.players = (Array.isArray(data.players) ? data.players : []).slice(0, MAX_PLAYERS).map((p) => ({
     name: String(p?.name || ""), color: validColor(p?.color, PLAYER_COLOR), dead: !!p?.dead }));
@@ -136,29 +146,37 @@ const Encounter = (() => {
         const n = npc(); if (!n) return;
         n.bases[c] = Math.max(0, toInt(w.base[c].value)); renderRoller(); persist(); } });
     }
-    w.stress = {};
-    const bump = (c, d) => { const n = npc(); if (n) { n.stress[c] = clampStress(n.stress[c] + d); refresh(); persist(); } };
-    for (const c of CATS) {
-      w.stress[c] = h("input", { type: "number", min: 0, max: R.stress.max, step: 1, "aria-label": c + " stress", oninput: () => {
-        const n = npc(); if (!n) return;
-        n.stress[c] = clampStress(w.stress[c].value); renderList(); renderRoller(); persist(); },
-        onchange: () => { const n = npc(); if (n) w.stress[c].value = n.stress[c]; } });
-    }
-    w.stressRows = CATS.map((c) => h("div", { class: "row" }, h("b", { class: "cat", style: `color:var(${CAT_COLOURS[c]})` }, c),
-      h("button", { class: "btn outline step", title: "Remove 1 stress", "aria-label": "Remove " + c + " stress", onclick: () => bump(c, -1) }, "\u2212"),
-      w.stress[c],
-      h("button", { class: "btn outline step", title: "Add 1 stress", "aria-label": "Add " + c + " stress", onclick: () => bump(c, 1) }, "+"),
-      (w.penalty ??= {})[c] = h("span", { class: "muted small" })));
+    const bump = (d) => { const n = npc(); if (n) { n.stress = Math.max(0, n.stress + d); refresh(); persist(); } };
+    w.stress = h("input", { type: "number", min: 0, step: 1, "aria-label": "Stress", oninput: () => {
+      const n = npc(); if (!n) return;
+      n.stress = Math.max(0, toInt(w.stress.value)); renderList(); renderRoller(); renderStatus(); persist(); },
+      onchange: () => { const n = npc(); if (n) w.stress.value = n.stress; } });
+    w.maxStress = h("input", { type: "number", min: 1, step: 1, "aria-label": "Max stress", oninput: () => {
+      const n = npc(); if (!n) return;
+      n.maxStress = Math.max(1, toInt(w.maxStress.value)); renderList(); renderStatus(); persist(); },
+      onchange: () => { const n = npc(); if (n) w.maxStress.value = n.maxStress; } });
+    w.penalty = h("span", { class: "muted small" });
+    w.status = h("div", { class: "muted small" });
+    w.stressRow = h("div", { class: "row" },
+      h("button", { class: "btn outline step", title: "Remove 1 stress", "aria-label": "Remove stress", onclick: () => bump(-1) }, "\u2212"),
+      w.stress,
+      h("button", { class: "btn outline step", title: "Add 1 stress", "aria-label": "Add stress", onclick: () => bump(1) }, "+"),
+      w.penalty);
+    w.goals = h("textarea", { rows: 3, placeholder: "Goals: what this NPC wants...", oninput: () => { const n = npc(); if (n) { n.goals = w.goals.value; persist(); } } });
+    w.weaknesses = h("textarea", { rows: 3, placeholder: "Weaknesses: flaws, fears, vulnerabilities...", oninput: () => { const n = npc(); if (n) { n.weaknesses = w.weaknesses.value; persist(); } } });
     w.notes = h("textarea", { rows: 6, placeholder: "Notes: personality, secrets, tactics...", oninput: () => { const n = npc(); if (n) { n.notes = w.notes.value; persist(); } } });
     w.editor = card("Selected NPC", h("label", { class: "f" }, "Name", w.name),
       h("div", { class: "f" }, "Base categories"),
       ...CATS.map((c) => h("div", { class: "row" }, h("b", { class: "cat", style: `color:var(${CAT_COLOURS[c]})` }, c), w.base[c])),
-      h("div", { class: "f" }, `Stress (max ${R.stress.max}; every ${R.stress.points_per_penalty} points is -${R.stress.penalty} to rolls in that category)`),
-      ...w.stressRows,
+      h("label", { class: "f" }, "Max stress", w.maxStress),
+      h("div", { class: "f" }, `Stress (every ${NPC_STRESS_PER_PENALTY} points is -1 to all rolls)`),
+      w.stressRow, w.status,
       h("div", { class: "row" }, h("button", { class: "btn outline", onclick: () => {
         const n = npc(); if (!n) return;
-        for (const c of CATS) n.stress[c] = 0;
-        refresh(); persist(); } }, "Clear all stress")),
+        n.stress = 0;
+        refresh(); persist(); } }, "Clear stress")),
+      h("label", { class: "f" }, "Goals", w.goals),
+      h("label", { class: "f" }, "Weaknesses", w.weaknesses),
       h("label", { class: "f" }, "Notes", w.notes),
       h("div", { class: "row" }, h("button", { class: "btn outline", onclick: duplicate }, "Duplicate"),
         h("button", { class: "btn outline", onclick: remove }, "Delete")));
@@ -188,14 +206,14 @@ const Encounter = (() => {
 
   function select(id) { state.selectedNpc = id; refresh(); }
   function add() {
-    const n = { id: newId(), name: "New NPC", notes: "", bases: Object.fromEntries(CATS.map((c) => [c, 0])),
-      stress: Object.fromEntries(CATS.map((c) => [c, 0])), color: NPC_COLOR, dead: false };
+    const n = { id: newId(), name: "New NPC",     notes: "", goals: "", weaknesses: "", bases: Object.fromEntries(CATS.map((c) => [c, 0])),
+          stress: 0, maxStress: NPC_MAX_STRESS, color: NPC_COLOR, dead: false };
     state.npcs.push(n); persist(); select(n.id);
     w.name.focus(); w.name.select();
   }
   function duplicate() {
     const n = npc(); if (!n) return;
-    const copy = { ...n, id: newId(), name: n.name + " (copy)", bases: { ...n.bases }, stress: { ...n.stress } };
+    const copy = { ...n, id: newId(), name: n.name + " (copy)", bases: { ...n.bases } };
     state.npcs.push(copy); persist(); select(copy.id);
   }
   function remove() {
@@ -210,26 +228,30 @@ const Encounter = (() => {
     w.list.replaceChildren(...state.npcs.map((n) => h("button", { class: "jentry" + (n.id === state.selectedNpc ? " sel" : ""), onclick: () => select(n.id) },
       h("b", {}, n.name || "Unnamed"),
       h("span", { class: "muted small" }, CATS.map((c) => `${c[0]} ${n.bases[c]}`).join("   ")),
-      h("span", { class: "muted small" }, "Stress: " + CATS.map((c) => `${c[0]} ${n.stress[c]}`).join("   ")))));
+      h("span", { class: "muted small" }, `Stress: ${n.stress}/${n.maxStress} - ${npcStatus(n)}`))));
     w.empty.hidden = state.npcs.length > 0;
   }
   function renderEditor() {
     const n = npc();
     w.editor.hidden = !n;
     if (!n) return;
-    w.name.value = n.name; w.notes.value = n.notes;
-    for (const c of CATS) {
-      w.base[c].value = n.bases[c];
-      if (document.activeElement !== w.stress[c]) w.stress[c].value = n.stress[c];
-      const p = stressPenalty(n.stress[c]);
-      w.penalty[c].textContent = p ? `-${p} to rolls` : "";
-    }
+    w.name.value = n.name; w.notes.value = n.notes; w.goals.value = n.goals; w.weaknesses.value = n.weaknesses;
+    for (const c of CATS) w.base[c].value = n.bases[c];
+    if (document.activeElement !== w.stress) w.stress.value = n.stress;
+    if (document.activeElement !== w.maxStress) w.maxStress.value = n.maxStress;
+    renderStatus();
+  }
+  function renderStatus() {
+    const n = npc(); if (!n) return;
+    const p = npcPenalty(n);
+    w.penalty.textContent = p ? `-${p} to rolls` : "";
+    w.status.textContent = "Status: " + npcStatus(n);
   }
   function renderRoller() {
     const n = npc();
     w.who.textContent = n ? n.name || "Unnamed" : "Select or add an NPC";
     w.catRadio.replaceChildren(...CATS.map((c) => h("label", {}, h("input", { type: "radio", name: "cat", checked: rs.category === c,
-      disabled: !n, onchange: () => { rs.category = c; renderRoller(); } }), n ? `${c} (${n.bases[c]}${n.stress[c] ? `, stress ${n.stress[c]}` : ""})` : c)));
+      disabled: !n, onchange: () => { rs.category = c; renderRoller(); } }), n ? `${c} (${n.bases[c]}${n.stress ? `, stress ${n.stress}` : ""})` : c)));
     w.roll.disabled = !n || rolling;
     const label = diceLabel(rs.mode);
     w.roll.textContent = "ROLL " + label;
@@ -241,7 +263,7 @@ const Encounter = (() => {
   }
   const parts_ = (n, cat = rs.category, mod = rs.mod) => {
     const p = { [cat]: n.bases[cat] };
-    const penalty = stressPenalty(n.stress[cat]);
+    const penalty = npcPenalty(n);
     if (penalty) p["Stress penalty"] = -penalty;
     if (mod) p.Modifier = mod;
     return p;
@@ -427,18 +449,19 @@ const Present = (() => {
     const stressBox = h("div", { class: "pstress" });
     const body = h("div", { class: "pbody" }, who, cat, mode, h("span", { class: "muted small" }, "Mod"), mod, rollBtn, res, stressBox);
     el.append(grip, h("div", { class: "prowbar" }, h("div", { class: "pbarmain" }, body), toggle));
-    const sw = {};
-    for (const c of CATS) {
-      sw[c] = { val: h("b", { class: "pval" }), pen: h("span", { class: "muted small" }) };
-      stressBox.append(h("span", { class: "pstat" }, h("span", { class: "cat", style: `color:var(${CAT_COLOURS[c]})`, title: c + " stress" }, c.slice(0, 4)),
-        h("button", { class: "btn outline step", "aria-label": "Remove " + c + " stress", title: "Remove 1 stress", onclick: () => bump(c, -1) }, "\u2212"),
-        sw[c].val,
-        h("button", { class: "btn outline step", "aria-label": "Add " + c + " stress", title: "Add 1 stress", onclick: () => bump(c, 1) }, "+"),
-        sw[c].pen));
-    }
-    function bump(c, d) {
+    const stat = h("span", { class: "pstat" });
+    const sVal = h("b", { class: "pval" }), sPen = h("span", { class: "muted small" }), sLabel = h("b", { class: "pstatus" });
+    const amt = h("input", { type: "number", min: 1, step: 1, value: 1, "aria-label": "Stress amount", title: "Points added or removed per click" });
+    const step = () => Math.max(1, toInt(amt.value));
+    stat.append(h("span", { class: "cat", title: "Stress" }, "Stress"),
+      h("button", { class: "btn outline step", "aria-label": "Remove stress", title: "Remove stress (amount box)", onclick: () => bump(-step()) }, "\u2212"),
+      sVal,
+      h("button", { class: "btn outline step", "aria-label": "Add stress", title: "Add stress (amount box)", onclick: () => bump(step()) }, "+"),
+      amt, sPen, sLabel);
+    stressBox.append(stat);
+    function bump(d) {
       const n = npc(); if (!n) return;
-      n.stress[c] = clampStress(n.stress[c] + d);
+      n.stress = Math.max(0, n.stress + d);
       persist(); Encounter.refresh(); draw();
     }
     function doRoll() {
@@ -470,11 +493,10 @@ const Present = (() => {
       if (!n) return;
       cat.replaceChildren(...CATS.map((c) => h("option", { value: c }, `${c} ${n.bases[c]}`)));
       cat.value = bs.category; mode.value = bs.mode;
-      for (const c of CATS) {
-        sw[c].val.textContent = n.stress[c];
-        const p = stressPenalty(n.stress[c]);
-        sw[c].pen.textContent = p ? `-${p}` : "";
-      }
+      sVal.textContent = `${n.stress}/${n.maxStress}`;
+      const p = npcPenalty(n);
+      sPen.textContent = p ? `-${p}` : "";
+      sLabel.textContent = npcStatus(n);
     }
     layout();
     return { el, draw };
