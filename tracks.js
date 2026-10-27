@@ -9,6 +9,10 @@ window.TRACKS = [
   "file": "music/Forward Looking2.mp3"
  },
  {
+  "title": "Heirs Together",
+  "file": "music/Heirs Together.mp3"
+ },
+ {
   "title": "Modal Lament",
   "file": "music/Modal Lament.mp3"
  },
