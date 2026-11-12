@@ -647,11 +647,7 @@ const Present = (() => {
   }
   const drawBar = () => bar.draw();
 
-  // Clicking the empty area around the map moves between images; clicking the map itself clears the highlight.
-  stage.addEventListener("click", (e) => {
-    if (e.target === stage) go(e.clientX - stage.getBoundingClientRect().left < stage.clientWidth / 3 ? -1 : 1);
-    else if (e.target === img) selectKey(null, false);
-  });
+  img.addEventListener("click", () => selectKey(null, false));
   document.addEventListener("keydown", (e) => {
     if (box.hidden) return;
     if (e.key === "Escape") stop();

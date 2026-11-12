@@ -123,7 +123,7 @@ button.aitem img { width: 56px; height: 40px; object-fit: cover; border-radius: 
   --stage-w: calc(100vw - 300px); --bar-h: 96px; }
 #present [hidden] { display: none !important; }
 #present.nopanel { grid-template-columns: minmax(0, 1fr); --stage-w: 100vw; }
-.pstage { grid-column: 1; grid-row: 1; min-width: 0; min-height: 0; position: relative; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.pstage { grid-column: 1; grid-row: 1; min-width: 0; min-height: 0; position: relative; display: flex; align-items: center; justify-content: center; }
 .pwrap { position: relative; line-height: 0; cursor: default; }
 .pwrap img { display: block; max-width: var(--stage-w); max-height: calc(100vh - var(--bar-h)); user-select: none; }
 #present.nopanel .pwrap img { max-height: 100vh; }
