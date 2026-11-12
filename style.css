@@ -157,11 +157,22 @@ button.aitem img { width: 56px; height: 40px; object-fit: cover; border-radius: 
 .pval { min-width: 18px; text-align: center; }
 .pstat input[type=number] { width: 52px; }
 .ppanel h4 { margin: 14px 0 4px; color: var(--accent); }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 .preopen { position: absolute; right: 10px; top: 10px; opacity: .35; }
 .preopen:hover { opacity: 1; }
 button.btn.small { padding: 3px 9px; font-size: 13px; }
 .plabel { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-button.prow { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; background: var(--field); color: var(--text);
+.pitem { position: relative; }
+.pitem.drop-before::before, .pitem.drop-after::after { content: ""; display: block; position: absolute; left: 0; right: 0; height: 3px; background: var(--accent); }
+.pitem.drop-before::before { top: -1px; }
+.pitem.drop-after::after { bottom: -1px; }
+.pitemrow { display: flex; align-items: center; gap: 3px; }
+.pdrag { cursor: grab; padding: 5px 3px; color: var(--muted); user-select: none; }
+.pdrag:active { cursor: grabbing; }
+.ptype { font-size: 11px; color: var(--muted); }
+button.pmove { flex: none; padding: 4px 2px; border: 0; background: transparent; color: var(--text); cursor: pointer; }
+button.pmove:disabled { opacity: .3; cursor: default; }
+button.prow { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; text-align: left; background: var(--field); color: var(--text);
   border: 1px solid var(--border); border-radius: 5px; padding: 5px 8px; margin: 2px 0; font: inherit; cursor: pointer; }
 button.prow:hover { border-color: var(--teal); }
 button.prow.sel { border-color: var(--accent); background: var(--bg); }

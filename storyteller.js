@@ -74,7 +74,7 @@ async function imageToDataUrl(file) {
 }
 
 // ---------- scenario state ----------
-const state = { name: "", npcs: [], players: [], assets: [], journal: [], selectedNpc: null, selectedAsset: null, nextId: 1 };
+const state = { name: "", npcs: [], players: [], assets: [], journal: [], initiativeOrder: [], selectedNpc: null, selectedAsset: null, nextId: 1 };
 const newId = () => state.nextId++;
 let warnedStorage = false, saveTimer;
 function persist() {
@@ -88,7 +88,7 @@ function persist() {
 }
 function scenarioData() {
   return { format: "unorthodox-scenario", version: 1, name: state.name, npcs: state.npcs, players: state.players, assets: state.assets,
-    journal: state.journal, nextId: state.nextId, savedAt: new Date().toISOString() };
+    journal: state.journal, initiativeOrder: orderedCharacters().map((c) => c.key), nextId: state.nextId, savedAt: new Date().toISOString() };
 }
 const validColor = (c, fallback) => (/^#[0-9a-f]{6}$/i.test(c) ? c : fallback);
 function applyScenario(data) {
@@ -104,6 +104,8 @@ function applyScenario(data) {
     color: validColor(n.color, NPC_COLOR), dead: !!n.dead }));
   state.players = (Array.isArray(data.players) ? data.players : []).slice(0, MAX_PLAYERS).map((p) => ({
     name: String(p?.name || ""), color: validColor(p?.color, PLAYER_COLOR), dead: !!p?.dead }));
+  state.initiativeOrder = Array.isArray(data.initiativeOrder) ? data.initiativeOrder : [];
+  orderedCharacters();
   state.assets = (Array.isArray(data.assets) ? data.assets : []).filter((a) => a && Number.isFinite(a.id) && typeof a.image === "string").map((a) => ({
     id: a.id, title: String(a.title || "Untitled"), text: String(a.text || ""), image: a.image, showText: !!a.showText,
     tokens: Object.fromEntries(Object.entries(a.tokens || {}).filter(([, p]) => p && Number.isFinite(p.x) && Number.isFinite(p.y))
@@ -129,6 +131,16 @@ function characters() {
     ...state.npcs.map((n) => ({ key: "n" + n.id, group: "NPCs", label: n.name || "Unnamed", short: initials(n.name || ""), obj: n, color: n.color })),
     ...state.players.map((p, i) => ({ key: "p" + i, group: "Players", label: handle(i) + (p.name ? " - " + p.name : ""), short: handle(i), obj: p, color: p.color })),
   ];
+}
+function orderedCharacters() {
+  const cs = characters(), byKey = new Map(cs.map((c) => [c.key, c]));
+  const ordered = [];
+  for (const key of state.initiativeOrder) {
+    if (byKey.has(key)) { ordered.push(byKey.get(key)); byKey.delete(key); }
+  }
+  ordered.push(...byKey.values());
+  state.initiativeOrder = ordered.map((c) => c.key);
+  return ordered;
 }
 
 // ---------- NPCs and roller ----------
@@ -222,6 +234,7 @@ const Encounter = (() => {
     if (!n || !confirm(`Delete ${n.name}?`)) return;
     const i = state.npcs.indexOf(n);
     state.npcs.splice(i, 1);
+    orderedCharacters();
     state.selectedNpc = (state.npcs[i] || state.npcs[i - 1])?.id ?? null;
     persist(); refresh();
   }
@@ -342,6 +355,7 @@ const Players = (() => {
     const n = Math.min(MAX_PLAYERS, Math.max(0, toInt(v)));
     while (state.players.length < n) state.players.push({ name: "", color: PLAYER_COLOR, dead: false });
     state.players.length = n;
+    orderedCharacters();
     persist(); refresh();
   }
   function refresh() {
@@ -430,9 +444,10 @@ const Present = (() => {
   const caption = h("div", { class: "pcap" });
   const stage = h("div", { class: "pstage" }, wrap, caption);
   const panel = h("div", { class: "ppanel" });
+  const announcement = h("div", { class: "sr-only", "aria-live": "polite" });
   const bar = Bar();
   const reopen = h("button", { class: "btn outline preopen", title: "Show control panel (H)", onclick: () => setPanel(true) }, "Panel");
-  box.append(stage, panel, bar.el, reopen);
+  box.append(stage, panel, bar.el, reopen, announcement);
 
   // Thin strip under the map: roll and stress controls for the selected NPC.
   function Bar() {
@@ -512,6 +527,8 @@ const Present = (() => {
   document.addEventListener("keydown", (e) => {
     if (box.hidden) return;
     if (e.key === "Escape") stop();
+    else if (e.target instanceof Element && (e.target.closest("input, select, textarea, [contenteditable=true]") ||
+      (e.key === " " && e.target.closest("button")))) return;
     else if (e.key === "ArrowRight" || e.key === " " || e.key === "PageDown") { e.preventDefault(); go(1); }
     else if (e.key === "ArrowLeft" || e.key === "PageUp") { e.preventDefault(); go(-1); }
     else if (e.key === "h" || e.key === "H") setPanel(box.classList.contains("nopanel"));
@@ -586,18 +603,61 @@ const Present = (() => {
     return h("div", { class: "pctl" }, h("div", { class: "pcols" }, swatches, cross),
       onMap ? h("button", { class: "btn outline small", onclick: () => { delete current().tokens[c.key]; persist(); drawTokens(); drawPanel(); } }, "Remove from map") : "");
   }
+  function moveCharacter(key, index, focusDirection) {
+    const cs = orderedCharacters(), from = cs.findIndex((c) => c.key === key);
+    if (from < 0 || index < 0 || index >= cs.length || from === index) return;
+    cs.splice(index, 0, cs.splice(from, 1)[0]);
+    state.initiativeOrder = cs.map((c) => c.key);
+    persist(); drawPanel();
+    announcement.textContent = `${cs[index].label} moved to position ${index + 1} of ${cs.length}.`;
+    if (focusDirection) {
+      const row = [...panel.querySelectorAll(".pitem")].find((item) => item.dataset.key === key);
+      const button = row?.querySelector(`.pmove-${focusDirection}`);
+      (button && !button.disabled ? button : row?.querySelector(".prow"))?.focus();
+    }
+  }
   function drawPanel() {
-    const a = current(), cs = characters();
-    const group = (name, empty) => {
-      const rows = cs.filter((c) => c.group === name).map((c) => {
-        const selected = c.key === sel;
-        const row = h("button", { class: "prow" + (selected ? " sel" : ""), onclick: () => selectKey(c.key, true) },
-          h("span", { class: "psw" + (c.obj.dead ? " x" : ""), style: `--c:${c.color}` }, c.obj.dead ? "\u271D" : ""),
-          h("span", { class: "plabel" }, c.label), h("span", { class: "muted small" }, a.tokens[c.key] ? "on map" : ""));
-        return h("div", {}, row, selected ? controls(c, !!a.tokens[c.key]) : "");
+    const a = current(), cs = orderedCharacters();
+    let dragging = null;
+    const rows = cs.map((c, i) => {
+      const selected = c.key === sel;
+      const handle = h("span", { class: "pdrag", draggable: true, title: "Drag to change initiative order", "aria-hidden": "true" }, "\u2630");
+      const row = h("button", { class: "prow" + (selected ? " sel" : ""), onclick: () => selectKey(c.key, true) },
+        h("span", { class: "psw" + (c.obj.dead ? " x" : ""), style: `--c:${c.color}` }, c.obj.dead ? "\u271D" : ""),
+        h("span", { class: "plabel" }, c.label), h("span", { class: "ptype" }, c.group === "NPCs" ? "NPC" : "Player"),
+        h("span", { class: "muted small" }, a.tokens[c.key] ? "on map" : ""));
+      const move = (direction, label, symbol) => h("button", { class: `pmove pmove-${label}`, title: `Move ${c.label} ${label}`,
+        "aria-label": `Move ${c.label} ${label}`, disabled: i + direction < 0 || i + direction >= cs.length,
+        onclick: () => moveCharacter(c.key, i + direction, label) }, symbol);
+      const item = h("div", { class: "pitem" }, h("div", { class: "pitemrow" }, handle, row,
+        move(-1, "up", "\u25B2"), move(1, "down", "\u25BC")), selected ? controls(c, !!a.tokens[c.key]) : "");
+      item.dataset.key = c.key;
+      handle.addEventListener("dragstart", (e) => {
+        dragging = c.key; e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", c.key);
       });
-      return [h("h4", {}, name), ...(rows.length ? rows : [h("div", { class: "muted small" }, empty)])];
-    };
+      handle.addEventListener("dragend", () => {
+        dragging = null;
+        panel.querySelectorAll(".drop-before, .drop-after").forEach((el) => el.classList.remove("drop-before", "drop-after"));
+      });
+      item.addEventListener("dragover", (e) => {
+        if (!dragging || dragging === c.key) return;
+        e.preventDefault(); e.dataTransfer.dropEffect = "move";
+        panel.querySelectorAll(".drop-before, .drop-after").forEach((el) => el.classList.remove("drop-before", "drop-after"));
+        item.classList.add(e.clientY < item.getBoundingClientRect().top + item.offsetHeight / 2 ? "drop-before" : "drop-after");
+      });
+      item.addEventListener("dragleave", (e) => {
+        if (!item.contains(e.relatedTarget)) item.classList.remove("drop-before", "drop-after");
+      });
+      item.addEventListener("drop", (e) => {
+        if (!dragging || dragging === c.key) return;
+        e.preventDefault();
+        const from = cs.findIndex((entry) => entry.key === dragging);
+        const after = e.clientY >= item.getBoundingClientRect().top + item.offsetHeight / 2;
+        moveCharacter(dragging, i + (after ? 1 : 0) - (from < i ? 1 : 0));
+        dragging = null;
+      });
+      return item;
+    });
     panel.replaceChildren(
       h("div", { class: "row", style: "justify-content:space-between" }, h("b", {}, "Presentation"),
         h("div", { class: "row", style: "margin:0" },
@@ -607,7 +667,9 @@ const Present = (() => {
         h("span", { class: "plabel small" }, `${index + 1} / ${state.assets.length}  ${a.title}`),
         h("button", { class: "btn outline small", onclick: () => go(1) }, "\u25B6")),
       h("div", { class: "muted small" }, "Click a character to highlight its piece (it is placed if missing). Drag pieces on the map."),
-      ...group("NPCs", "No NPCs yet."), ...group("Players", "Set the number of players on the NPCs & Roller tab."));
+      h("h4", {}, "Initiative order"),
+      h("div", { class: "muted small" }, "Drag the handle or use the arrows to change the order."),
+      ...(rows.length ? rows : [h("div", { class: "muted small" }, "Add players or NPCs on the NPCs & Roller tab.")]));
   }
   function go(d) {
     const n = state.assets.length;
