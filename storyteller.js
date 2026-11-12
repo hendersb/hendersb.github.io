@@ -78,6 +78,7 @@ const state = { name: "", npcs: [], players: [], assets: [], journal: [], initia
 const newId = () => state.nextId++;
 let warnedStorage = false, saveTimer;
 function persist() {
+  Present.refreshPlayerView();
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     try { localStorage.setItem(STORE_KEY, JSON.stringify(scenarioData())); }
@@ -91,6 +92,37 @@ function scenarioData() {
     journal: state.journal, initiativeOrder: orderedCharacters().map((c) => c.key), nextId: state.nextId, savedAt: new Date().toISOString() };
 }
 const validColor = (c, fallback) => (/^#[0-9a-f]{6}$/i.test(c) ? c : fallback);
+const clamp01 = (v) => Math.min(1, Math.max(0, v));
+function normalizeFog(fog) {
+  const areas = (Array.isArray(fog?.areas) ? fog.areas : [])
+    .filter((a) => a && ["x", "y", "w", "h"].every((key) => Number.isFinite(a[key])) &&
+      a.w > 0 && a.h > 0 && typeof a.reveal === "boolean")
+    .map((a) => {
+      const x = clamp01(a.x), y = clamp01(a.y);
+      return { x, y, w: Math.max(0, clamp01(a.x + a.w) - x), h: Math.max(0, clamp01(a.y + a.h) - y), reveal: a.reveal };
+    }).filter((a) => a.w > 0 && a.h > 0);
+  return { enabled: fog?.enabled === true, areas };
+}
+function revealedAt(fog, x, y) {
+  if (!fog.enabled) return true;
+  let visible = false;
+  for (const a of fog.areas) {
+    if (x >= a.x && x <= a.x + a.w && y >= a.y && y <= a.y + a.h) visible = a.reveal;
+  }
+  return visible;
+}
+function drawFog(canvas, fog) {
+  canvas.hidden = !fog.enabled;
+  if (!fog.enabled) return;
+  const ctx = canvas.getContext("2d"), size = canvas.width;
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, size, size);
+  for (const a of fog.areas) {
+    const args = [a.x * size, a.y * size, a.w * size, a.h * size];
+    if (a.reveal) ctx.clearRect(...args);
+    else ctx.fillRect(...args);
+  }
+}
 function applyScenario(data) {
   if (!data || typeof data !== "object") throw new Error("not a scenario file");
   state.name = String(data.name || "");
@@ -109,6 +141,7 @@ function applyScenario(data) {
   orderedCharacters();
   state.assets = (Array.isArray(data.assets) ? data.assets : []).filter((a) => a && Number.isFinite(a.id) && typeof a.image === "string").map((a) => ({
     id: a.id, title: String(a.title || "Untitled"), text: String(a.text || ""), image: a.image, showText: !!a.showText,
+    fog: normalizeFog(a.fog),
     tokens: Object.fromEntries(Object.entries(a.tokens || {}).filter(([, p]) => p && Number.isFinite(p.x) && Number.isFinite(p.y))
       .map(([k, p]) => [k, { x: Math.min(1, Math.max(0, p.x)), y: Math.min(1, Math.max(0, p.y)) }])) }));
   state.journal = (Array.isArray(data.journal) ? data.journal : []).filter((e) => e && Number.isFinite(e.id)).map((e) => ({
@@ -417,7 +450,8 @@ const Assets = (() => {
     for (const f of files) {
       try {
         if (!f.type.startsWith("image/")) throw new Error("not an image");
-        const a = { id: newId(), title: f.name.replace(/\.[^.]+$/, ""), text: "", image: await imageToDataUrl(f), showText: false, tokens: {} };
+        const a = { id: newId(), title: f.name.replace(/\.[^.]+$/, ""), text: "", image: await imageToDataUrl(f), showText: false,
+          fog: normalizeFog(null), tokens: {} };
         state.assets.push(a); state.selectedAsset = a.id;
       } catch (e) { toast(`Could not add ${f.name}: ${e.message}`); }
     }
@@ -448,19 +482,92 @@ const Assets = (() => {
     renderList();
     const a = asset();
     w.editor.hidden = !a;
+    Present.refreshPlayerView();
     if (!a) return;
     w.img.src = a.image; w.title.value = a.title; w.text.value = a.text; w.showText.checked = a.showText;
   }
   return { build, refresh };
 })();
 
+// ---------- separate player view ----------
+const PlayerView = (() => {
+  let view = null, viewDocument, image, tokenLayer, fogLayer, caption, message;
+
+  function open() {
+    if (view && !view.closed) { view.focus(); return true; }
+    view = window.open("", "_blank", "popup,width=1100,height=750");
+    if (!view) { toast("Could not open player view. Allow pop-ups and try again."); return false; }
+    view.opener = null;
+    viewDocument = view.document;
+    viewDocument.title = "Unorthodox - Player view";
+    const body = viewDocument.body, openedView = view;
+    body.hidden = true;
+    const link = viewDocument.createElement("link");
+    link.rel = "stylesheet"; link.href = document.querySelector('link[rel="stylesheet"]').href;
+    link.onload = () => { body.hidden = false; };
+    link.onerror = () => {
+      body.textContent = "Could not load player-view styles. Close this window and try again.";
+      body.hidden = false;
+      if (view === openedView) { view = null; toast("Could not load player-view styles."); }
+    };
+    viewDocument.head.append(link);
+    body.className = "player-view";
+    const stage = viewDocument.createElement("div"); stage.className = "pstage";
+    const wrap = viewDocument.createElement("div"); wrap.className = "pwrap";
+    image = viewDocument.createElement("img"); image.alt = "Presented map or image";
+    tokenLayer = viewDocument.createElement("div"); tokenLayer.className = "ptokens";
+    fogLayer = viewDocument.createElement("canvas"); fogLayer.className = "pfog"; fogLayer.width = fogLayer.height = 1024;
+    caption = viewDocument.createElement("div"); caption.className = "pcap";
+    message = viewDocument.createElement("div"); message.textContent = "No map selected.";
+    wrap.append(image, tokenLayer, fogLayer); stage.append(wrap, caption, message); body.append(stage);
+    return true;
+  }
+
+  function update(data) {
+    if (!view || view.closed) return;
+    try {
+      if (view.document !== viewDocument) {
+        view = null;
+        toast("Player view was navigated away. Open it again to continue.");
+        return;
+      }
+    } catch (e) {
+      if (e.name !== "SecurityError") throw e;
+      view = null;
+      toast("Player view was navigated away. Open it again to continue.");
+      return;
+    }
+    image.hidden = !data; tokenLayer.hidden = !data; fogLayer.hidden = !data; message.hidden = !!data;
+    caption.hidden = !data || !data.caption;
+    caption.textContent = data ? data.caption : "";
+    if (!data) { image.removeAttribute("src"); tokenLayer.replaceChildren(); return; }
+    drawFog(fogLayer, data.fog);
+    if (image.getAttribute("src") !== data.image) image.src = data.image;
+    tokenLayer.replaceChildren(...data.tokens.map((t) => {
+      const el = viewDocument.createElement("div");
+      el.className = "ptoken" + (t.dead ? " dead" : "");
+      el.style.left = t.x * 100 + "%"; el.style.top = t.y * 100 + "%";
+      el.style.setProperty("--c", t.color); el.style.setProperty("--t", textOn(t.color));
+      const dot = viewDocument.createElement("div"); dot.className = "pdot"; dot.textContent = t.dead ? "\u271D" : t.short;
+      const label = viewDocument.createElement("div"); label.className = "plab"; label.textContent = t.label;
+      el.append(dot, label); return el;
+    }));
+  }
+
+  window.addEventListener("pagehide", () => { if (view && !view.closed) view.close(); });
+  return { open, update, get isOpen() { return !!view && !view.closed; } };
+})();
+
 // ---------- presentation ----------
 const Present = (() => {
   const box = $("present");
-  let index = 0, sel = null;
+  let index = 0, sel = null, fogMode = null;
   const img = h("img", { alt: "", draggable: false });
   const tokens = h("div", { class: "ptokens" });
-  const wrap = h("div", { class: "pwrap" }, img, tokens);
+  const fogLayer = h("canvas", { class: "pfog", width: 1024, height: 1024 });
+  const fogPreview = h("div", { class: "pfog-preview", hidden: true });
+  const fogInput = h("div", { class: "pfog-input", hidden: true }, fogPreview);
+  const wrap = h("div", { class: "pwrap" }, img, tokens, fogLayer, fogInput);
   const caption = h("div", { class: "pcap" });
   const stage = h("div", { class: "pstage" }, wrap, caption);
   const panel = h("div", { class: "ppanel" });
@@ -554,21 +661,66 @@ const Present = (() => {
     else if (e.key === "ArrowLeft" || e.key === "PageUp") { e.preventDefault(); go(-1); }
     else if (e.key === "h" || e.key === "H") setPanel(box.classList.contains("nopanel"));
   });
-  document.addEventListener("fullscreenchange", () => { if (!document.fullscreenElement && !box.hidden) stop(); });
-
   function setPanel(show) {
     box.classList.toggle("nopanel", !show);
     panel.hidden = !show; bar.el.hidden = !show; reopen.hidden = show;
   }
   const current = () => state.assets[index];
+  const pointOnMap = (e) => {
+    const r = wrap.getBoundingClientRect();
+    return { x: clamp01((e.clientX - r.left) / r.width), y: clamp01((e.clientY - r.top) / r.height) };
+  };
+  fogInput.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0 || !fogMode) return;
+    e.preventDefault(); e.stopPropagation();
+    fogInput.setPointerCapture(e.pointerId);
+    const start = pointOnMap(e), map = current(), mode = fogMode;
+    const rectangle = (end) => ({ x: Math.min(start.x, end.x), y: Math.min(start.y, end.y),
+      w: Math.abs(end.x - start.x), h: Math.abs(end.y - start.y), reveal: mode === "reveal" });
+    const move = (ev) => {
+      const r = rectangle(pointOnMap(ev));
+      fogPreview.hidden = false;
+      fogPreview.style.left = r.x * 100 + "%"; fogPreview.style.top = r.y * 100 + "%";
+      fogPreview.style.width = r.w * 100 + "%"; fogPreview.style.height = r.h * 100 + "%";
+    };
+    const finish = (ev) => {
+      fogInput.removeEventListener("pointermove", move); fogInput.removeEventListener("pointerup", finish);
+      fogInput.removeEventListener("pointercancel", cancel);
+      fogPreview.hidden = true;
+      if (ev.type === "pointercancel" || current() !== map || fogMode !== mode || !map.fog.enabled) return;
+      const r = rectangle(pointOnMap(ev));
+      if (r.w < 0.002 || r.h < 0.002) return;
+      map.fog.areas.push(r); drawFog(fogLayer, map.fog); persist();
+    };
+    const cancel = (ev) => finish(ev);
+    fogInput.addEventListener("pointermove", move); fogInput.addEventListener("pointerup", finish);
+    fogInput.addEventListener("pointercancel", cancel);
+  });
+  function refreshPlayerView() {
+    if (!PlayerView.isOpen) return;
+    const a = asset();
+    if (!a) { PlayerView.update(null); return; }
+    const byKey = new Map(characters().filter((c) => availableOnMap(c, a.id)).map((c) => [c.key, c]));
+    const visibleTokens = Object.entries(a.tokens).filter(([key, pos]) => byKey.has(key) && revealedAt(a.fog, pos.x, pos.y)).map(([key, pos]) => {
+      const c = byKey.get(key);
+      return { x: pos.x, y: pos.y, color: c.color, dead: c.obj.dead, short: c.short, label: c.label };
+    });
+    PlayerView.update({ image: a.image, caption: a.showText ? [a.title, a.text].filter(Boolean).join("\n") : "",
+      fog: a.fog, tokens: visibleTokens });
+  }
+  function openPlayerView() {
+    if (!asset()) return toast("Upload an image first.");
+    if (PlayerView.open()) refreshPlayerView();
+  }
   function drawStage() {
     const a = current();
+    fogMode = null; fogInput.hidden = true; fogPreview.hidden = true;
     if (sel && !orderedCharacters().some((c) => c.key === sel && availableOnMap(c, a.id))) sel = null;
     img.src = a.image;
     caption.textContent = a.showText ? [a.title, a.text].filter(Boolean).join("\n") : "";
     caption.hidden = !a.showText;
     state.selectedAsset = a.id;
-    drawTokens(); drawPanel(); drawBar();
+    drawFog(fogLayer, a.fog); drawTokens(); drawPanel(); drawBar(); refreshPlayerView();
   }
   function drawTokens() {
     const byKey = new Map(characters().filter((c) => availableOnMap(c, current().id)).map((c) => [c.key, c]));
@@ -589,6 +741,7 @@ const Present = (() => {
         pos.x = Math.min(1, Math.max(0, (ev.clientX - r.left) / r.width));
         pos.y = Math.min(1, Math.max(0, (ev.clientY - r.top) / r.height));
         el.style.left = pos.x * 100 + "%"; el.style.top = pos.y * 100 + "%";
+        refreshPlayerView();
       };
       const up = () => {
         el.removeEventListener("pointermove", move); el.removeEventListener("pointerup", up); el.removeEventListener("pointercancel", up);
@@ -684,14 +837,28 @@ const Present = (() => {
     panel.replaceChildren(
       h("div", { class: "row", style: "justify-content:space-between" }, h("b", {}, "Presentation"),
         h("div", { class: "row", style: "margin:0" },
+          h("button", { class: "btn outline small", onclick: openPlayerView }, "Open player view"),
           h("button", { class: "btn outline small", title: "Hide this panel (H) so only the map shows", onclick: () => setPanel(false) }, "Hide"),
           h("button", { class: "btn outline small", title: "Exit presentation (Esc)", onclick: stop }, "Exit"))),
       h("div", { class: "row" }, h("button", { class: "btn outline small", onclick: () => go(-1) }, "\u25C0"),
         h("span", { class: "plabel small" }, `${index + 1} / ${state.assets.length}  ${a.title}`),
         h("button", { class: "btn outline small", onclick: () => go(1) }, "\u25B6")),
-      h("div", { class: "muted small" }, "Click a character to highlight its piece (it is placed if missing). Drag pieces on the map."),
+      h("h4", {}, "Map fog"),
+      h("label", { class: "f" }, h("input", { type: "checkbox", checked: a.fog.enabled, onchange: (e) => {
+        if (!e.target.checked && !confirm("Turn off fog and reveal the entire map to players?")) {
+          e.target.checked = true; return;
+        }
+        a.fog.enabled = e.target.checked; fogMode = null; fogInput.hidden = true; fogPreview.hidden = true;
+        drawFog(fogLayer, a.fog); persist(); drawPanel();
+      } }), "Enable fog on this map"),
+      ...(a.fog.enabled ? [
+        h("div", { class: "row" },
+          ...[["reveal", "Reveal area"], ["cover", "Cover area"]].map(([mode, label]) =>
+            h("button", { class: "btn small" + (fogMode === mode ? "" : " outline"), onclick: () => {
+              fogMode = fogMode === mode ? null : mode; fogInput.hidden = !fogMode; fogPreview.hidden = true; drawPanel();
+            } }, label))),
+      ] : []),
       h("h4", {}, "Initiative order"),
-      h("div", { class: "muted small" }, "Drag the handle or use the arrows to change the order."),
       ...(rows.length ? rows : [h("div", { class: "muted small" }, "No characters available on this map.")]));
   }
   function go(d) {
@@ -705,14 +872,12 @@ const Present = (() => {
     index = Math.max(0, state.assets.findIndex((a) => a.id === id));
     setPanel(true); drawStage();
     box.hidden = false;
-    box.requestFullscreen?.().catch(() => {});
   }
   function stop() {
     box.hidden = true;
-    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     Assets.refresh();
   }
-  return { start };
+  return { start, refreshPlayerView };
 })();
 
 // ---------- journal ----------
