@@ -101,7 +101,8 @@ function applyScenario(data) {
     maxStress: Math.max(1, toInt(n.maxStress) || NPC_MAX_STRESS),
     // Older scenarios kept a stress value per category; fold them into the single bucket.
     stress: Math.max(0, typeof n.stress === "object" && n.stress ? Object.values(n.stress).reduce((a, v) => a + toInt(v), 0) : toInt(n.stress)),
-    color: validColor(n.color, NPC_COLOR), dead: !!n.dead }));
+    color: validColor(n.color, NPC_COLOR), dead: !!n.dead,
+    allMaps: n.allMaps !== false, mapIds: Array.isArray(n.mapIds) ? n.mapIds.filter(Number.isFinite) : [] }));
   state.players = (Array.isArray(data.players) ? data.players : []).slice(0, MAX_PLAYERS).map((p) => ({
     name: String(p?.name || ""), color: validColor(p?.color, PLAYER_COLOR), dead: !!p?.dead }));
   state.initiativeOrder = Array.isArray(data.initiativeOrder) ? data.initiativeOrder : [];
@@ -142,6 +143,8 @@ function orderedCharacters() {
   state.initiativeOrder = ordered.map((c) => c.key);
   return ordered;
 }
+const npcOnMap = (n, id) => n.allMaps || n.mapIds.includes(id);
+const availableOnMap = (c, id) => c.group !== "NPCs" || npcOnMap(c.obj, id);
 
 // ---------- NPCs and roller ----------
 const Encounter = (() => {
@@ -177,7 +180,13 @@ const Encounter = (() => {
     w.goals = h("textarea", { rows: 3, placeholder: "Goals: what this NPC wants...", oninput: () => { const n = npc(); if (n) { n.goals = w.goals.value; persist(); } } });
     w.weaknesses = h("textarea", { rows: 3, placeholder: "Weaknesses: flaws, fears, vulnerabilities...", oninput: () => { const n = npc(); if (n) { n.weaknesses = w.weaknesses.value; persist(); } } });
     w.notes = h("textarea", { rows: 6, placeholder: "Notes: personality, secrets, tactics...", oninput: () => { const n = npc(); if (n) { n.notes = w.notes.value; persist(); } } });
+    w.allMaps = h("input", { type: "checkbox", onchange: () => {
+      const n = npc(); if (!n) return;
+      n.allMaps = w.allMaps.checked; renderMaps(n); persist();
+    } });
+    w.maps = h("div");
     w.editor = card("Selected NPC", h("label", { class: "f" }, "Name", w.name),
+      h("label", { class: "f" }, w.allMaps, "Available on all maps"), w.maps,
       h("div", { class: "f" }, "Base categories"),
       ...CATS.map((c) => h("div", { class: "row" }, h("b", { class: "cat", style: `color:var(${CAT_COLOURS[c]})` }, c), w.base[c])),
       h("label", { class: "f" }, "Max stress", w.maxStress),
@@ -220,13 +229,13 @@ const Encounter = (() => {
   function select(id) { state.selectedNpc = id; refresh(); }
   function add() {
     const n = { id: newId(), name: "New NPC",     notes: "", goals: "", weaknesses: "", bases: Object.fromEntries(CATS.map((c) => [c, 0])),
-          stress: 0, maxStress: NPC_MAX_STRESS, color: NPC_COLOR, dead: false };
+          stress: 0, maxStress: NPC_MAX_STRESS, color: NPC_COLOR, dead: false, allMaps: true, mapIds: [] };
     state.npcs.push(n); persist(); select(n.id);
     w.name.focus(); w.name.select();
   }
   function duplicate() {
     const n = npc(); if (!n) return;
-    const copy = { ...n, id: newId(), name: n.name + " (copy)", bases: { ...n.bases } };
+    const copy = { ...n, id: newId(), name: n.name + " (copy)", bases: { ...n.bases }, mapIds: [...n.mapIds] };
     state.npcs.push(copy); persist(); select(copy.id);
   }
   function remove() {
@@ -250,10 +259,20 @@ const Encounter = (() => {
     w.editor.hidden = !n;
     if (!n) return;
     w.name.value = n.name; w.notes.value = n.notes; w.goals.value = n.goals; w.weaknesses.value = n.weaknesses;
+    w.allMaps.checked = n.allMaps; renderMaps(n);
     for (const c of CATS) w.base[c].value = n.bases[c];
     if (document.activeElement !== w.stress) w.stress.value = n.stress;
     if (document.activeElement !== w.maxStress) w.maxStress.value = n.maxStress;
     renderStatus();
+  }
+  function renderMaps(n) {
+    w.maps.hidden = n.allMaps;
+    w.maps.replaceChildren(h("div", { class: "f" }, "Available on selected maps:"),
+      ...(state.assets.length ? state.assets.map((a) =>
+      h("label", { class: "f" }, h("input", { type: "checkbox", checked: n.mapIds.includes(a.id), onchange: (e) => {
+        n.mapIds = e.target.checked ? [...n.mapIds, a.id] : n.mapIds.filter((id) => id !== a.id);
+        persist();
+      } }), a.title || "Untitled")) : [h("div", { class: "muted small" }, "Add maps or images to select them here.")]));
   }
   function renderStatus() {
     const n = npc(); if (!n) return;
@@ -415,6 +434,7 @@ const Assets = (() => {
     if (!a || !confirm(`Delete "${a.title}"?`)) return;
     const i = state.assets.indexOf(a);
     state.assets.splice(i, 1);
+    for (const n of state.npcs) n.mapIds = n.mapIds.filter((id) => id !== a.id);
     state.selectedAsset = (state.assets[i] || state.assets[i - 1])?.id ?? null;
     persist(); refresh();
   }
@@ -501,7 +521,8 @@ const Present = (() => {
       grip.addEventListener("pointermove", move); grip.addEventListener("pointerup", up); grip.addEventListener("pointercancel", up);
     });
     function draw() {
-      const n = npc();
+      const selected = npc();
+      const n = selected && npcOnMap(selected, current().id) ? selected : null;
       body.classList.toggle("none", !n);
       who.textContent = n ? n.name || "Unnamed" : "No NPC selected - click one in the list";
       for (const x of [cat, mode, mod, rollBtn]) x.hidden = !n;
@@ -542,6 +563,7 @@ const Present = (() => {
   const current = () => state.assets[index];
   function drawStage() {
     const a = current();
+    if (sel && !orderedCharacters().some((c) => c.key === sel && availableOnMap(c, a.id))) sel = null;
     img.src = a.image;
     caption.textContent = a.showText ? [a.title, a.text].filter(Boolean).join("\n") : "";
     caption.hidden = !a.showText;
@@ -549,7 +571,7 @@ const Present = (() => {
     drawTokens(); drawPanel(); drawBar();
   }
   function drawTokens() {
-    const byKey = new Map(characters().map((c) => [c.key, c]));
+    const byKey = new Map(characters().filter((c) => availableOnMap(c, current().id)).map((c) => [c.key, c]));
     tokens.replaceChildren(...Object.entries(current().tokens).filter(([k]) => byKey.has(k)).map(([k, pos]) => tokenEl(byKey.get(k), pos)));
   }
   function tokenEl(c, pos) {
@@ -604,10 +626,11 @@ const Present = (() => {
       onMap ? h("button", { class: "btn outline small", onclick: () => { delete current().tokens[c.key]; persist(); drawTokens(); drawPanel(); } }, "Remove from map") : "");
   }
   function moveCharacter(key, index, focusDirection) {
-    const cs = orderedCharacters(), from = cs.findIndex((c) => c.key === key);
+    const all = orderedCharacters(), cs = all.filter((c) => availableOnMap(c, current().id)), from = cs.findIndex((c) => c.key === key);
     if (from < 0 || index < 0 || index >= cs.length || from === index) return;
     cs.splice(index, 0, cs.splice(from, 1)[0]);
-    state.initiativeOrder = cs.map((c) => c.key);
+    let visibleIndex = 0;
+    state.initiativeOrder = all.map((c) => availableOnMap(c, current().id) ? cs[visibleIndex++].key : c.key);
     persist(); drawPanel();
     announcement.textContent = `${cs[index].label} moved to position ${index + 1} of ${cs.length}.`;
     if (focusDirection) {
@@ -617,7 +640,7 @@ const Present = (() => {
     }
   }
   function drawPanel() {
-    const a = current(), cs = orderedCharacters();
+    const a = current(), cs = orderedCharacters().filter((c) => availableOnMap(c, a.id));
     let dragging = null;
     const rows = cs.map((c, i) => {
       const selected = c.key === sel;
@@ -669,7 +692,7 @@ const Present = (() => {
       h("div", { class: "muted small" }, "Click a character to highlight its piece (it is placed if missing). Drag pieces on the map."),
       h("h4", {}, "Initiative order"),
       h("div", { class: "muted small" }, "Drag the handle or use the arrows to change the order."),
-      ...(rows.length ? rows : [h("div", { class: "muted small" }, "Add players or NPCs on the NPCs & Roller tab.")]));
+      ...(rows.length ? rows : [h("div", { class: "muted small" }, "No characters available on this map.")]));
   }
   function go(d) {
     const n = state.assets.length;
@@ -784,5 +807,6 @@ const TABS = ["encounter", "assets", "journal"];
 for (const t of TABS) {
   $("tab-" + t).onclick = () => {
     for (const o of TABS) { $("page-" + o).hidden = o !== t; $("tab-" + o).classList.toggle("active", o === t); }
+    if (t === "encounter") Encounter.refresh();
   };
 }
