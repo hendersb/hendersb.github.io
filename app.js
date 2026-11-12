@@ -750,9 +750,11 @@ const Journal = (() => {
     w.list = h("div", { class: "jlist" });
     w.del = h("button", { class: "btn outline", onclick: remove }, "Delete");
     root.append(h("div", { class: "cols jcols" },
-      h("div", { class: "col wide" }, card("Journal entry", w.meta, w.title, w.body,
-        h("div", { class: "row" }, h("button", { class: "btn", onclick: save }, "Save entry"),
-          h("button", { class: "btn outline", onclick: () => edit(null) }, "New entry"), w.del))),
+      h("div", { class: "col wide" }, card(null,
+        h("div", { class: "journal-header" }, h("h3", {}, "Journal entry"),
+          h("div", { class: "row journal-actions" }, h("button", { class: "btn", onclick: save }, "Save entry"),
+            h("button", { class: "btn outline", onclick: () => edit(null) }, "New entry"), w.del)),
+        w.meta, w.title, w.body)),
       h("div", { class: "col" }, card("Entries (newest first)", w.list))));
     edit(null);
   }
