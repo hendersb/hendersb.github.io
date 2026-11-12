@@ -215,9 +215,9 @@ const Encounter = (() => {
     w.history = h("div", { class: "history" });
 
     root.append(h("div", { class: "cols" },
-      h("div", { class: "col" }, Players.el),
       h("div", { class: "col" }, card("NPCs (click to select)", w.list, w.empty,
-        h("div", { class: "row" }, h("button", { class: "btn", onclick: add }, "Add NPC"))), w.editor),
+        h("div", { class: "row" }, h("button", { class: "btn", onclick: add }, "Add NPC"))), Players.el),
+      h("div", { class: "col" }, w.editor),
       h("div", { class: "col" }, h("h2", {}, "Roll for NPC"), card("Selected", w.who, w.catRadio,
         h("div", { class: "row" }, h("span", { class: "muted" }, "Modifier"), w.mod), w.modeRadio, w.preview),
         card("Result", h("div", { class: "center" }, w.dice, w.total, w.outcome), w.breakdown), w.roll,
