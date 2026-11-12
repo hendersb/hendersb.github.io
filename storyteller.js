@@ -725,7 +725,7 @@ const Journal = (() => {
       current = { id: newId(), date: new Date().toISOString(), title: title || "Untitled", text };
       state.journal.push(current);
     }
-    persist(); edit(current); toast("Entry saved");
+    persist(); edit(null); toast("Entry saved");
   }
   function remove() {
     if (!current || !confirm(`Delete entry #${current.id}?`)) return;

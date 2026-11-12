@@ -771,7 +771,7 @@ const Journal = (() => {
       current = { id: Math.max(0, ...entries.map((e) => e.id)) + 1, date: new Date().toISOString(), title: title || "Untitled", text };
       entries.push(current);
     }
-    persist(); edit(current); toast("Entry saved");
+    persist(); edit(null); toast("Entry saved");
   }
   function remove() {
     if (!current || !confirm(`Delete entry #${current.id}?`)) return;
